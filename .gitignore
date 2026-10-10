@@ -70,3 +70,6 @@ Testing/
 
 # Vendored prebuilt libraries (e.g. CTP SDK) must be tracked
 !third_party/**/lib/*.so
+
+# CMake / vcpkg build output
+/out/

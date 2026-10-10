@@ -1,0 +1,109 @@
+{
+    "version": 8,
+    "configurePresets": [
+        {
+            "name": "base",
+            "description": "Vcpkg toolchain and output paths. Linux hosts only.",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "installDir": "${sourceDir}/out/install/${presetName}",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": {
+                    "type": "FILEPATH",
+                    "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+                }
+            }
+        },
+        {
+            "name": "linux-ninja-x64",
+            "description": "Linux + Ninja + Clang (x64)",
+            "inherits": "base",
+            "generator": "Ninja",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "VCPKG_TARGET_TRIPLET": "x64-linux"
+            }
+        },
+        {
+            "name": "linux-ninja-x64-debug",
+            "displayName": "Linux / Ninja / x64 / Debug",
+            "inherits": "linux-ninja-x64",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "linux-ninja-x64-release",
+            "displayName": "Linux / Ninja / x64 / Release",
+            "inherits": "linux-ninja-x64",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "linux-ninja-x64-relwithdebinfo",
+            "displayName": "Linux / Ninja / x64 / RelWithDebInfo",
+            "inherits": "linux-ninja-x64",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "linux-x64-debug",
+            "displayName": "Linux x64 Debug",
+            "configurePreset": "linux-ninja-x64-debug"
+        },
+        {
+            "name": "linux-x64-release",
+            "displayName": "Linux x64 Release",
+            "configurePreset": "linux-ninja-x64-release"
+        },
+        {
+            "name": "linux-x64-relwithdebinfo",
+            "displayName": "Linux x64 RelWithDebInfo",
+            "configurePreset": "linux-ninja-x64-relwithdebinfo"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "test-base",
+            "description": "Shared test behavior: fail on no tests, verbose on failure.",
+            "hidden": true,
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error",
+                "stopOnFailure": false
+            }
+        },
+        {
+            "name": "linux-x64-debug",
+            "displayName": "Linux x64 Debug Tests",
+            "inherits": "test-base",
+            "configurePreset": "linux-ninja-x64-debug"
+        },
+        {
+            "name": "linux-x64-release",
+            "displayName": "Linux x64 Release Tests",
+            "inherits": "test-base",
+            "configurePreset": "linux-ninja-x64-release"
+        },
+        {
+            "name": "linux-x64-relwithdebinfo",
+            "displayName": "Linux x64 RelWithDebInfo Tests",
+            "inherits": "test-base",
+            "configurePreset": "linux-ninja-x64-relwithdebinfo"
+        }
+    ]
+}
