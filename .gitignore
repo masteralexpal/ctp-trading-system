@@ -67,3 +67,6 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Vendored prebuilt libraries (e.g. CTP SDK) must be tracked
+!third_party/**/lib/*.so
