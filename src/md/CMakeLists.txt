@@ -2,10 +2,15 @@ add_library(md ${CTS_LIBRARY_TYPE})
 
 target_sources(
     md
-    PRIVATE console_md_listener.cc md_dispatcher.cc md_gateway.cc
-            # detail/: boundary code, internal to md (exposes CTP types)
-            detail/md_spi_adapter.cc detail/md_spi_adapter.h
-            detail/tick_ctp.cc detail/tick_ctp.h
+    PRIVATE
+        console_md_listener.cc
+        md_dispatcher.cc
+        md_gateway.cc
+        # detail/: boundary code, internal to md (exposes CTP types)
+        detail/md_spi_adapter.cc
+        detail/md_spi_adapter.h
+        detail/tick_ctp.cc
+        detail/tick_ctp.h
     PUBLIC
         FILE_SET HEADERS
             FILES

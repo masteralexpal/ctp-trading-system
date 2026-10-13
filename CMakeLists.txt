@@ -23,7 +23,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 #------------------------------------------------------------------------------
 message(STATUS "[cts] SystemName: ${CMAKE_SYSTEM_NAME}")
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(FATAL_ERROR "[cts] Unsupported platform: ${CMAKE_SYSTEM_NAME}. Only Linux is supported.")
+    message(
+        FATAL_ERROR
+        "[cts] Unsupported platform: ${CMAKE_SYSTEM_NAME}. Only Linux is supported."
+    )
 endif()
 
 #------------------------------------------------------------------------------
@@ -47,10 +50,7 @@ endif()
 #------------------------------------------------------------------------------
 # Compiler driver style
 #------------------------------------------------------------------------------
-message(
-    STATUS
-    "[cts] CompilerFrontend: ${CMAKE_CXX_COMPILER_FRONTEND_VARIANT}"
-)
+message(STATUS "[cts] CompilerFrontend: ${CMAKE_CXX_COMPILER_FRONTEND_VARIANT}")
 if(NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "GNU")
     message(
         FATAL_ERROR
@@ -88,12 +88,7 @@ target_include_directories(cts_config INTERFACE ${CTS_ROOT}/src)
 
 target_compile_options(
     cts_config
-    INTERFACE
-        -Wall
-        -Wextra
-        -Wpedantic
-        -Wshadow
-        -fvisibility=hidden
+    INTERFACE -Wall -Wextra -Wpedantic -Wshadow -fvisibility=hidden
 )
 target_link_options(cts_config INTERFACE -fuse-ld=lld)
 

@@ -73,3 +73,6 @@ Testing/
 
 # CMake / vcpkg build output
 /out/
+
+# CTP API flow files.
+*.con

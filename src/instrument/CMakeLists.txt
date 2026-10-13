@@ -4,8 +4,7 @@ target_sources(
     instrument
     PRIVATE instrument_master.cc
     PUBLIC
-        FILE_SET HEADERS
-            FILES instrument.h instrument_ctp.h instrument_master.h
+        FILE_SET HEADERS FILES instrument.h instrument_ctp.h instrument_master.h
 )
 
 target_link_libraries(
