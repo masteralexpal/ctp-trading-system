@@ -1,2 +1,4 @@
 add_subdirectory(base)
+add_subdirectory(instrument)
+add_subdirectory(md)
 add_subdirectory(app)
