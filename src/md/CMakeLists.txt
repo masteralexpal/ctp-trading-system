@@ -7,6 +7,8 @@ target_sources(
         md_dispatcher.cc
         md_gateway.cc
         # detail/: boundary code, internal to md (exposes CTP types)
+        detail/md_api_ops.cc
+        detail/md_api_ops.h
         detail/md_spi_adapter.cc
         detail/md_spi_adapter.h
         detail/tick_ctp.cc
@@ -36,10 +38,15 @@ target_link_libraries(
 add_library(cts::md ALIAS md)
 
 if(CTS_ENABLE_UNIT_TESTS)
-    add_executable(md_test tests/md_dispatcher_test.cc tests/tick_ctp_test.cc)
+    add_executable(
+        md_test
+        tests/md_dispatcher_test.cc
+        tests/md_gateway_test.cc
+        tests/tick_ctp_test.cc
+    )
     target_link_libraries(
         md_test
-        # ctp_md is explicit here: tick_ctp_test feeds raw CTP structs
+        # ctp_md is explicit here: tests feed raw CTP structs / fake the API
         PRIVATE cts::md third_party::ctp_md third_party::gtest
     )
     include(GoogleTest)

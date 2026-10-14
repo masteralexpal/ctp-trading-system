@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "ThostFtdcMdApi.h"
+#include "md/detail/md_api_ops.h"
 #include "md/md_delegate.h"
 #include "md/md_gateway.h"
 
@@ -32,9 +33,7 @@ namespace cts::md::detail {
 // type MdSpiAdapter (see MdGateway::Disconnect).
 class MdSpiAdapter final : public CThostFtdcMdSpi {
  public:
-  MdSpiAdapter(CThostFtdcMdApi* api,
-               MdGatewayConfig config,
-               MdDelegate& delegate);
+  MdSpiAdapter(MdApiOps* api, MdGatewayConfig config, MdDelegate& delegate);
 
   // Returns the CTP error code; 0 means accepted
   int Subscribe(std::vector<std::string> const& instruments);
@@ -62,7 +61,7 @@ class MdSpiAdapter final : public CThostFtdcMdSpi {
   int CallSubscribe(std::vector<std::string> const& instruments,
                     bool subscribe);
 
-  CThostFtdcMdApi* api_;
+  MdApiOps* api_;
   MdGatewayConfig config_;
   MdDelegate& delegate_;
   int request_id_{0};

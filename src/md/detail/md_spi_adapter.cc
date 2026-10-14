@@ -15,7 +15,7 @@
 
 namespace cts::md::detail {
 
-MdSpiAdapter::MdSpiAdapter(CThostFtdcMdApi* api,
+MdSpiAdapter::MdSpiAdapter(MdApiOps* api,
                            MdGatewayConfig config,
                            MdDelegate& delegate)
     : api_(api), config_(std::move(config)), delegate_(delegate) {}
@@ -119,11 +119,9 @@ int MdSpiAdapter::CallSubscribe(std::vector<std::string> const& instruments,
     ptrs.push_back(s.data());
   }
   if (subscribe) {
-    return api_->SubscribeMarketData(ptrs.data(),
-                                     static_cast<int>(ptrs.size()));
+    return api_->SubscribeMarketData(ptrs);
   }
-  return api_->UnSubscribeMarketData(ptrs.data(),
-                                     static_cast<int>(ptrs.size()));
+  return api_->UnSubscribeMarketData(ptrs);
 }
 
 }  // namespace cts::md::detail

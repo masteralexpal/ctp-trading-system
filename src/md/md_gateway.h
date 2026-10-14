@@ -8,15 +8,19 @@
 #ifndef CTS_MD_MD_GATEWAY_H_
 #define CTS_MD_MD_GATEWAY_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "md/md_delegate.h"
 
-class CThostFtdcMdApi;
 class CThostFtdcMdSpi;
 
 namespace cts::md {
+
+namespace detail {
+class MdApiOps;  // test seam; production callers never touch it
+}
 
 struct MdGatewayConfig {
   std::string front;
@@ -36,6 +40,11 @@ class MdGateway {
 
   // Call only from non-CTP threads (Disconnect joins the callback thread)
   void Connect(MdGatewayConfig config, MdDelegate& delegate);
+  // Test seam: inject a fake MdApiOps. Defined out-of-line -- the type is
+  // incomplete here, so no default argument
+  void Connect(MdGatewayConfig config,
+               MdDelegate& delegate,
+               std::unique_ptr<detail::MdApiOps> ops);
 
   // Subscribe/unsubscribe; callable from any thread. Subscriptions are restored
   // after reconnect
@@ -47,7 +56,9 @@ class MdGateway {
   void Disconnect();
 
  private:
-  CThostFtdcMdApi* api_ = nullptr;
+  // Owned. Raw pointer because detail::MdApiOps is incomplete here; deleted in
+  // Disconnect (same pattern as spi_)
+  detail::MdApiOps* api_ = nullptr;
   CThostFtdcMdSpi* spi_ = nullptr;
 };
 

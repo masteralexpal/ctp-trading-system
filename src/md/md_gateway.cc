@@ -5,10 +5,9 @@
  */
 #include "md/md_gateway.h"
 
-#include <filesystem>
 #include <utility>
 
-#include "ThostFtdcMdApi.h"
+#include "md/detail/md_api_ops.h"
 #include "md/detail/md_spi_adapter.h"
 
 namespace cts::md {
@@ -20,18 +19,19 @@ MdGateway::~MdGateway() {
 }
 
 void MdGateway::Connect(MdGatewayConfig config, MdDelegate& delegate) {
+  auto ops = std::make_unique<detail::CtpMdApiOps>(config.flow_dir);
+  Connect(std::move(config), delegate, std::move(ops));
+}
+
+void MdGateway::Connect(MdGatewayConfig config,
+                        MdDelegate& delegate,
+                        std::unique_ptr<detail::MdApiOps> ops) {
   if (api_ != nullptr) {
     return;
   }
-  // The SDK concatenates filenames raw; the trailing slash is contractual
-  if (config.flow_dir.empty() || config.flow_dir.back() != '/') {
-    config.flow_dir += '/';
-  }
-  std::filesystem::create_directories(config.flow_dir);
-
   std::string front = config.front;
-  api_ = CThostFtdcMdApi::CreateFtdcMdApi(config.flow_dir.c_str());
-  spi_ = new detail::MdSpiAdapter(api_, std::move(config), delegate);
+  spi_ = new detail::MdSpiAdapter(ops.get(), std::move(config), delegate);
+  api_ = ops.release();
   api_->RegisterSpi(spi_);
   api_->RegisterFront(front.data());  // CTP copies the string internally
   api_->Init();
@@ -56,7 +56,8 @@ void MdGateway::Disconnect() {
     return;
   }
   api_->RegisterSpi(nullptr);
-  api_->Release();  // blocks until internal threads exit
+  api_->Release();  // production impl blocks until internal threads exit
+  delete api_;
   api_ = nullptr;
   // CThostFtdcMdSpi has no virtual dtor; delete with the exact type
   delete static_cast<detail::MdSpiAdapter*>(spi_);
