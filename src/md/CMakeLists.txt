@@ -3,7 +3,7 @@ add_library(md ${CTS_LIBRARY_TYPE})
 target_sources(
     md
     PRIVATE
-        console_md_listener.cc
+        console_md_client.cc
         md_dispatcher.cc
         md_gateway.cc
         # detail/: boundary code, internal to md (exposes CTP types)
@@ -16,11 +16,11 @@ target_sources(
     PUBLIC
         FILE_SET HEADERS
             FILES
-                console_md_listener.h
+                console_md_client.h
                 md_delegate.h
                 md_dispatcher.h
                 md_gateway.h
-                md_listener.h
+                md_client.h
                 tick.h
                 # detail/md_event.h rides along: md_dispatcher.h's queue member
                 # needs the complete type. Still internal -- do not include

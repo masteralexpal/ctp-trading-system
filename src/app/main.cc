@@ -14,7 +14,7 @@
 #include "app/cli.h"
 #include "base/thread.h"
 #include "base/version.h"
-#include "md/console_md_listener.h"
+#include "md/console_md_client.h"
 #include "md/md_dispatcher.h"
 #include "md/md_gateway.h"
 
@@ -62,16 +62,16 @@ void DumpConfig(cts::app::AppConfig const& cfg) {
   }
 }
 
-// Wait for the login result (arrives async via dispatcher queue); returns
+// Wait for the login result (arrives async via the dispatcher); returns
 // success
-bool WaitMdLogin(cts::md::ConsoleMdListener const& listener,
+bool WaitMdLogin(cts::md::MdDispatcher const& dispatcher,
                  std::chrono::seconds timeout) {
   auto const deadline = std::chrono::steady_clock::now() + timeout;
-  while (!listener.logged_in.load() &&
+  while (!dispatcher.logged_in() &&
          std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
-  return listener.logged_in.load();
+  return dispatcher.logged_in();
 }
 
 // Shutdown signals: the handler only sets a flag (sig_atomic_t is
@@ -93,9 +93,9 @@ void InstallSignalHandlers() {
 int RunTrading(cts::app::AppConfig const& cfg) {
   SPDLOG_INFO("ctp-trading-system v{} starting", cts::base::Version());
 
-  cts::md::ConsoleMdListener listener;
+  cts::md::ConsoleMdClient client;
   cts::md::MdDispatcher dispatcher;
-  dispatcher.AddListener(listener);
+  dispatcher.AddClient(client);
 
   cts::base::Thread md_dispatch_thread{"md-dispatch"};
   md_dispatch_thread.Start([&dispatcher] { dispatcher.Run(); });
@@ -115,7 +115,7 @@ int RunTrading(cts::app::AppConfig const& cfg) {
       },
       dispatcher);
 
-  if (!WaitMdLogin(listener, std::chrono::seconds{30})) {
+  if (!WaitMdLogin(dispatcher, std::chrono::seconds{30})) {
     SPDLOG_ERROR("md: login timeout, exiting");
     // Must run the shutdown sequence: otherwise ~Thread() joins the spinning
     // Run() forever

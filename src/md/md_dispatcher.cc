@@ -36,22 +36,30 @@ void MdDispatcher::Push(detail::MdEvent event) {
 }
 
 void MdDispatcher::Dispatch(detail::MdEvent const& event) {
-  for (auto* listener : listeners_) {
+  // State is tracked before fan-out: login readiness lives here, not in any
+  // particular client
+  if (event.kind == detail::MdEvent::Kind::kLogin) {
+    logged_in_.store(event.success, std::memory_order_release);
+  } else if (event.kind == detail::MdEvent::Kind::kDisconnected) {
+    logged_in_.store(false, std::memory_order_release);
+  }
+  // Pure forwarding: the event vocabulary is identical on both sides
+  for (auto* client : clients_) {
     switch (event.kind) {
       case detail::MdEvent::Kind::kConnected:
-        listener->OnMdState(true, false);
+        client->OnMdConnected();
         break;
       case detail::MdEvent::Kind::kDisconnected:
-        listener->OnMdState(false, false);
+        client->OnMdDisconnected(event.code);
         break;
       case detail::MdEvent::Kind::kLogin:
-        listener->OnMdState(true, event.success);
+        client->OnMdLogin(event.success, event.msg);
         break;
       case detail::MdEvent::Kind::kTick:
-        listener->OnTick(event.tick);
+        client->OnTick(event.tick);
         break;
       case detail::MdEvent::Kind::kError:
-        listener->OnMdError(event.code, event.msg);
+        client->OnMdError(event.code, event.msg);
         break;
     }
   }

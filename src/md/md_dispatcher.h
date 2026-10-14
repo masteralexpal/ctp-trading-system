@@ -15,8 +15,8 @@
 
 #include "base/spsc_queue.h"
 #include "md/detail/md_event.h"
+#include "md/md_client.h"
 #include "md/md_delegate.h"
-#include "md/md_listener.h"
 
 namespace cts::md {
 
@@ -24,7 +24,7 @@ namespace cts::md {
 // the consumer loop Run() is placed on a dedicated thread by the assembler
 // (this class spawns nothing).
 //
-// Assembly order: AddListener* -> base::Thread.Start([&]{ d.Run(); }) ->
+// Assembly order: AddClient* -> base::Thread.Start([&]{ d.Run(); }) ->
 // MdGateway::Connect -> ... -> MdGateway::Disconnect ->
 // RequestStop -> Thread.Stop
 class MdDispatcher final : public MdDelegate {
@@ -36,7 +36,7 @@ class MdDispatcher final : public MdDelegate {
   MdDispatcher& operator=(MdDispatcher const&) = delete;
 
   // Call only before Run
-  void AddListener(MdListener& listener) { listeners_.push_back(&listener); }
+  void AddClient(MdClient& client) { clients_.push_back(&client); }
 
   // Consumer loop: runs on the caller's thread until RequestStop and drained
   void Run();
@@ -45,6 +45,10 @@ class MdDispatcher final : public MdDelegate {
 
   // Total events dropped on queue overflow (backpressure metric)
   std::size_t dropped_events() const { return queue_.dropped(); }
+
+  // Login readiness, owned here (first to know, not a debug client's side
+  // job). Written on the dispatch thread; readable from any thread
+  bool logged_in() const { return logged_in_.load(std::memory_order_acquire); }
 
   // MdDelegate: all of the following run on the CTP callback thread
   void OnMdConnected() override {
@@ -84,8 +88,9 @@ class MdDispatcher final : public MdDelegate {
   void Dispatch(detail::MdEvent const& event);
 
   base::SpscQueue<detail::MdEvent, 4096> queue_;
-  std::vector<MdListener*> listeners_;
+  std::vector<MdClient*> clients_;
   std::atomic<bool> stop_requested_{false};
+  std::atomic<bool> logged_in_{false};  // dispatch-thread written
 };
 
 }  // namespace cts::md

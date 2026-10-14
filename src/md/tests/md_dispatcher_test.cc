@@ -17,16 +17,20 @@
 namespace cts::md {
 namespace {
 
-// Recording listener: captures the event sequence for assertions
-struct RecordingListener : MdListener {
+// Recording client: captures the event sequence for assertions
+struct RecordingClient : MdClient {
   std::vector<std::string> events;
 
+  void OnMdConnected() override { events.emplace_back("connected"); }
+  void OnMdDisconnected(int reason) override {
+    events.emplace_back("disconnected:" + std::to_string(reason));
+  }
+  void OnMdLogin(bool success, std::string_view msg) override {
+    events.emplace_back(std::string("login:") + (success ? "ok:" : "fail:") +
+                        std::string(msg));
+  }
   void OnTick(Tick const& tick) override {
     events.emplace_back(std::string("tick:") + tick.instrument_id);
-  }
-  void OnMdState(bool connected, bool login) override {
-    events.emplace_back("state:" + std::to_string(connected) + "," +
-                        std::to_string(login));
   }
   void OnMdError(int error_id, std::string_view msg) override {
     events.emplace_back("error:" + std::to_string(error_id) + ":" +
@@ -50,34 +54,34 @@ bool RunUntil(MdDispatcher& dispatcher, base::Thread& thread, F&& cond) {
 
 TEST(MdDispatcherTest, EventsFanOutInOrder) {
   MdDispatcher dispatcher;
-  RecordingListener listener;
-  dispatcher.AddListener(listener);
+  RecordingClient client;
+  dispatcher.AddClient(client);
 
   Tick tick{};
   std::strncpy(tick.instrument_id, "rb2701", sizeof(tick.instrument_id) - 1);
 
   // Enqueue first, then start the consumer (queue decouples the two)
   dispatcher.OnMdConnected();
-  dispatcher.OnMdLogin(true, "ok");
+  dispatcher.OnMdLogin(true, "");
   dispatcher.OnMdTick(tick);
   dispatcher.OnMdError(7, "bad");
 
   base::Thread thread{"test-md-dispatch"};
   bool const ok =
-      RunUntil(dispatcher, thread, [&] { return listener.events.size() >= 4; });
+      RunUntil(dispatcher, thread, [&] { return client.events.size() >= 4; });
   ASSERT_TRUE(ok);
-  ASSERT_EQ(listener.events.size(), 4u);
-  EXPECT_EQ(listener.events[0], "state:1,0");
-  EXPECT_EQ(listener.events[1], "state:1,1");
-  EXPECT_EQ(listener.events[2], "tick:rb2701");
-  EXPECT_EQ(listener.events[3], "error:7:bad");
+  ASSERT_EQ(client.events.size(), 4u);
+  EXPECT_EQ(client.events[0], "connected");
+  EXPECT_EQ(client.events[1], "login:ok:");
+  EXPECT_EQ(client.events[2], "tick:rb2701");
+  EXPECT_EQ(client.events[3], "error:7:bad");
 }
 
-TEST(MdDispatcherTest, MultipleListenersAllReceive) {
+TEST(MdDispatcherTest, MultipleClientsAllReceive) {
   MdDispatcher dispatcher;
-  RecordingListener a, b;
-  dispatcher.AddListener(a);
-  dispatcher.AddListener(b);
+  RecordingClient a, b;
+  dispatcher.AddClient(a);
+  dispatcher.AddClient(b);
 
   dispatcher.OnMdConnected();
 
@@ -114,18 +118,46 @@ TEST(MdDispatcherTest, OverflowDropsAndCounts) {
 
 TEST(MdDispatcherTest, DisconnectEventOrder) {
   MdDispatcher dispatcher;
-  RecordingListener listener;
-  dispatcher.AddListener(listener);
+  RecordingClient client;
+  dispatcher.AddClient(client);
 
   dispatcher.OnMdConnected();
   dispatcher.OnMdDisconnected(4097);  // the common heartbeat-timeout reason
 
   base::Thread thread{"test-md-dispatch"};
   bool const ok =
-      RunUntil(dispatcher, thread, [&] { return listener.events.size() >= 2; });
+      RunUntil(dispatcher, thread, [&] { return client.events.size() >= 2; });
   ASSERT_TRUE(ok);
-  EXPECT_EQ(listener.events[0], "state:1,0");
-  EXPECT_EQ(listener.events[1], "state:0,0");
+  EXPECT_EQ(client.events[0], "connected");
+  EXPECT_EQ(client.events[1], "disconnected:4097");
+}
+
+TEST(MdDispatcherTest, LoginStateIsTrackedByDispatcher) {
+  MdDispatcher dispatcher;
+  RecordingClient client;
+  dispatcher.AddClient(client);
+
+  EXPECT_FALSE(dispatcher.logged_in());
+  dispatcher.OnMdConnected();
+  dispatcher.OnMdLogin(true, "");
+
+  base::Thread thread{"test-md-dispatch"};
+  bool const ok =
+      RunUntil(dispatcher, thread, [&] { return dispatcher.logged_in(); });
+  ASSERT_TRUE(ok);
+
+  // A later disconnect flips it back
+  MdDispatcher dispatcher2;
+  RecordingClient client2;
+  dispatcher2.AddClient(client2);
+  dispatcher2.OnMdLogin(true, "");
+  dispatcher2.OnMdDisconnected(4097);
+
+  base::Thread thread2{"test-md-dispatch"};
+  bool const ok2 = RunUntil(dispatcher2, thread2,
+                            [&] { return client2.events.size() >= 2; });
+  ASSERT_TRUE(ok2);
+  EXPECT_FALSE(dispatcher2.logged_in());
 }
 
 }  // namespace
