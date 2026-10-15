@@ -2,7 +2,7 @@ add_library(base ${CTS_LIBRARY_TYPE})
 
 target_sources(
     base
-    PRIVATE charset.cc time_utils.cc version.cc
+    PRIVATE charset.cc shutdown.cc task/task_loop.cc time_utils.cc version.cc
     PUBLIC
         FILE_SET HEADERS
             FILES
@@ -12,7 +12,10 @@ target_sources(
                 latest_spsc_queue.h
                 string_utils.h
                 no_destructor.h
+                shutdown.h
                 spsc_queue.h
+                task/task.h
+                task/task_loop.h
                 thread.h
                 time_utils.h
                 version.h
@@ -30,8 +33,10 @@ if(CTS_ENABLE_UNIT_TESTS)
         tests/charset_test.cc
         tests/latest_spsc_queue_test.cc
         tests/no_destructor_test.cc
+        tests/shutdown_test.cc
         tests/spsc_queue_test.cc
         tests/string_utils_test.cc
+        tests/task_loop_test.cc
         tests/thread_test.cc
         tests/time_utils_test.cc
     )

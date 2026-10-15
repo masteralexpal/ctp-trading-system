@@ -5,13 +5,14 @@
  */
 
 #include <chrono>
-#include <csignal>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
 
 #include "app/cli.h"
+#include "base/shutdown.h"
+#include "base/task/task_loop.h"
 #include "base/thread.h"
 #include "base/version.h"
 #include "md/console_md_client.h"
@@ -63,33 +64,20 @@ void DumpConfig(cts::app::AppConfig const& cfg) {
 }
 
 // Wait for the login result (arrives async via the dispatcher); returns
-// success
+// success. A shutdown request aborts the wait immediately
 bool WaitMdLogin(cts::md::MdDispatcher const& dispatcher,
                  std::chrono::seconds timeout) {
   auto const deadline = std::chrono::steady_clock::now() + timeout;
-  while (!dispatcher.logged_in() &&
+  while (!dispatcher.logged_in() && !cts::base::ShutdownRequested() &&
          std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   return dispatcher.logged_in();
 }
 
-// Shutdown signals: the handler only sets a flag (sig_atomic_t is
-// async-signal-safe); the main loop polls it. No masking, no sigwait -- also
-// effective during startup.
-sig_atomic_t volatile g_shutdown_signal = 0;
-
-void HandleShutdownSignal(int sig) {
-  g_shutdown_signal = sig;
-}
-
-void InstallSignalHandlers() {
-  std::signal(SIGINT, HandleShutdownSignal);
-  std::signal(SIGTERM, HandleShutdownSignal);
-}
-
-// Main pipeline: connect md gateway -> subscribe -> wait for shutdown ->
-// graceful stop
+// Main pipeline: connect md gateway -> subscribe -> park -> graceful stop.
+// Shutdown: first Ctrl-C sets the shutdown flag (futex wake, no polling);
+// a second Ctrl-C _Exit()s immediately
 int RunTrading(cts::app::AppConfig const& cfg) {
   SPDLOG_INFO("ctp-trading-system v{} starting", cts::base::Version());
 
@@ -116,12 +104,17 @@ int RunTrading(cts::app::AppConfig const& cfg) {
       dispatcher);
 
   if (!WaitMdLogin(dispatcher, std::chrono::seconds{30})) {
-    SPDLOG_ERROR("md: login timeout, exiting");
+    bool const aborted = cts::base::ShutdownRequested();
+    if (aborted) {
+      SPDLOG_INFO("md: shutdown requested during login wait");
+    } else {
+      SPDLOG_ERROR("md: login timeout, exiting");
+    }
     // Must run the shutdown sequence: otherwise ~Thread() joins the spinning
     // Run() forever
     md_gateway.Disconnect();
     dispatcher.RequestStop();
-    return 1;  // md_dispatch_thread is joined at destruction
+    return aborted ? 0 : 1;  // md_dispatch_thread is joined at destruction
   }
 
   if (!cfg.instruments.empty()) {
@@ -130,11 +123,24 @@ int RunTrading(cts::app::AppConfig const& cfg) {
     }
   }
 
-  SPDLOG_INFO("running; Ctrl-C or SIGTERM to exit...");
-  while (g_shutdown_signal == 0) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  }
-  SPDLOG_INFO("signal {} received, shutting down", g_shutdown_signal);
+  SPDLOG_INFO("running; Ctrl-C to stop (twice to force-kill)");
+
+  // The main thread is a task loop: periodic housekeeping lives here.
+  // Shutdown (first Ctrl-C) wakes and stops it via the shutdown wake word
+  cts::base::TaskLoop loop;
+  struct HealthTick {
+    cts::base::TaskLoop* loop;
+    cts::md::MdDispatcher const* dispatcher;
+    void operator()() const {
+      SPDLOG_INFO("md: dropped_events={}", dispatcher->dropped_events());
+      loop->PostDelayedTask(*this, std::chrono::seconds{60});
+    }
+  };
+  loop.PostDelayedTask(HealthTick{&loop, &dispatcher},
+                       std::chrono::seconds{60});
+
+  loop.Run();
+  SPDLOG_INFO("shutdown requested, draining");
 
   // disconnect gateway first (no new events), then request stop, then join
   // (drains queue)
@@ -147,7 +153,7 @@ int RunTrading(cts::app::AppConfig const& cfg) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  InstallSignalHandlers();
+  cts::base::InstallShutdownHandlers();
 
   auto [config, exit_code] = cts::app::ParseArgs(argc, argv);
   if (!config) {
