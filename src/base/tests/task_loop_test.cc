@@ -134,6 +134,11 @@ TEST(TaskLoopTest, PendingDelayedTaskIsDroppedOnStop) {
 }
 
 TEST(TaskLoopTest, WatchedFdFiresOnReadable) {
+  // Run() must stay alive until the write lands; impossible when an earlier
+  // test (ShutdownRequestStopsRun) already set the sticky shutdown flag
+  if (ShutdownRequested()) {
+    GTEST_SKIP() << "shutdown flag already set by an earlier test";
+  }
   int fds[2];
   ASSERT_EQ(pipe(fds), 0);
 

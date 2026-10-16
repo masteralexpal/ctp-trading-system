@@ -25,6 +25,8 @@ namespace cts::base {
 // touches head, keeping strict single-writer semantics. Elements live in raw
 // storage via placement new, so T need not be default-constructible.
 //
+// Slot storage is heap-allocated at construction: Capacity * sizeof(T) can
+// be megabytes, which must not land inline in a stack frame.
 // Indices are monotonic (safe within 2^64); Capacity must be a power of two.
 // See latest_spsc_queue.h for the drop-oldest variant.
 template <typename T,
@@ -39,7 +41,10 @@ class SpscQueue {
                 "CacheLineSize too small");
 
  public:
-  SpscQueue() = default;
+  SpscQueue()
+      : storage_(static_cast<std::byte*>(
+            ::operator new(Capacity * sizeof(T),
+                           std::align_val_t{alignof(T)}))) {}
 
   ~SpscQueue() {
     if constexpr (!std::is_trivially_destructible_v<T>) {
@@ -49,6 +54,7 @@ class SpscQueue {
         std::destroy_at(SlotPtr(head));
       }
     }
+    ::operator delete(storage_, std::align_val_t{alignof(T)});
   }
 
   SpscQueue(SpscQueue const&) = delete;
@@ -101,7 +107,7 @@ class SpscQueue {
         reinterpret_cast<T*>(storage_ + (index & kMask) * sizeof(T)));
   }
 
-  alignas(T) std::byte storage_[Capacity * sizeof(T)];
+  std::byte* const storage_;
   alignas(CacheLineSize) std::atomic<std::size_t> head_{0};  // consumer-owned
   alignas(CacheLineSize) std::atomic<std::size_t> tail_{0};  // producer-owned
   alignas(CacheLineSize) std::size_t cached_head_{0};        // producer-owned
