@@ -38,16 +38,16 @@ class MdDispatcher final : public MdDelegate {
   // Call only before Run
   void AddClient(MdClient& client) { clients_.push_back(&client); }
 
-  // Consumer loop: runs on the caller's thread until RequestStop and drained
+  // Consumer loop: parks on a futex when empty (zero CPU); runs on the
+  // caller's thread until RequestStop and drained
   void Run();
-  // Idempotent, callable from any thread; Run returns after draining
-  void RequestStop() { stop_requested_.store(true, std::memory_order_release); }
+  // Idempotent, any thread; wakes the parked loop; Run drains then returns
+  void RequestStop();
 
   // Total events dropped on queue overflow (backpressure metric)
   std::size_t dropped_events() const { return queue_.dropped(); }
 
-  // Login readiness, owned here (first to know, not a debug client's side
-  // job). Written on the dispatch thread; readable from any thread
+  // Login readiness (dispatch-thread written, readable from any thread)
   bool logged_in() const { return logged_in_.load(std::memory_order_acquire); }
 
   // MdDelegate: all of the following run on the CTP callback thread
@@ -91,6 +91,8 @@ class MdDispatcher final : public MdDelegate {
   std::vector<MdClient*> clients_;
   std::atomic<bool> stop_requested_{false};
   std::atomic<bool> logged_in_{false};  // dispatch-thread written
+  std::atomic<std::uint32_t> wake_{0};  // futex parking word
+  std::atomic<bool> parked_{false};     // gates producer-side wakes
 };
 
 }  // namespace cts::md

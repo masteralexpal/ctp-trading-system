@@ -89,6 +89,12 @@ class SpscQueue {
     return dropped_.load(std::memory_order_relaxed);
   }
 
+  // Consumer side only
+  bool Empty() const noexcept {
+    return head_.load(std::memory_order_relaxed) ==
+           tail_.load(std::memory_order_acquire);
+  }
+
  private:
   T* SlotPtr(std::size_t index) noexcept {
     return std::launder(

@@ -160,5 +160,38 @@ TEST(MdDispatcherTest, LoginStateIsTrackedByDispatcher) {
   EXPECT_FALSE(dispatcher2.logged_in());
 }
 
+TEST(MdDispatcherTest, RequestStopWakesParkedLoop) {
+  MdDispatcher dispatcher;  // nothing queued: Run parks immediately
+  base::Thread thread{"test-md-dispatch"};
+  thread.Start([&] { dispatcher.Run(); });
+
+  std::this_thread::sleep_for(std::chrono::milliseconds{50});  // let it park
+  auto const begin = std::chrono::steady_clock::now();
+  dispatcher.RequestStop();
+  thread.Stop();  // joins; hangs forever if the wake is broken
+  EXPECT_LT(std::chrono::steady_clock::now() - begin, std::chrono::seconds{5});
+}
+
+TEST(MdDispatcherTest, PushWakesParkedConsumer) {
+  MdDispatcher dispatcher;
+  RecordingClient client;
+  dispatcher.AddClient(client);
+
+  base::Thread thread{"test-md-dispatch"};
+  thread.Start([&] { dispatcher.Run(); });
+  std::this_thread::sleep_for(std::chrono::milliseconds{50});  // let it park
+
+  dispatcher.OnMdConnected();
+  auto const deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds{5};
+  while (client.events.empty() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  dispatcher.RequestStop();
+  thread.Stop();
+  ASSERT_EQ(client.events.size(), 1u);
+  EXPECT_EQ(client.events[0], "connected");
+}
+
 }  // namespace
 }  // namespace cts::md

@@ -77,10 +77,12 @@ struct RecordingDelegate : MdDelegate {
 };
 
 struct MdGatewayTest : testing::Test {
+  // Declaration order is load-bearing: ~MdGateway -> Disconnect() drives the
+  // fake, which logs into `calls` -- so `calls` must be destroyed last
+  std::vector<std::string> calls;
   MdGateway gateway;
   RecordingDelegate delegate;
-  std::vector<std::string> calls;  // outlives the fake (see FakeMdApiOps)
-  FakeMdApiOps* fake = nullptr;    // owned by gateway once connected
+  FakeMdApiOps* fake = nullptr;  // owned by gateway once connected
 
   void Connect() {
     auto ops = std::make_unique<FakeMdApiOps>(calls);
