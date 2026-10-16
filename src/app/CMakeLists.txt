@@ -1,4 +1,4 @@
-add_executable(cts_app app_config.cc cli.cc main.cc)
+add_executable(cts_app app_config.cc cli.cc console.cc main.cc)
 
 target_link_libraries(
     cts_app

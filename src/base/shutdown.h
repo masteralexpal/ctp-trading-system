@@ -8,27 +8,30 @@
 #ifndef CTS_BASE_SHUTDOWN_H_
 #define CTS_BASE_SHUTDOWN_H_
 
-#include <atomic>
-#include <cstdint>
-
 namespace cts::base {
+
+class WaitableEvent;
 
 // Installs SIGINT/SIGTERM handlers. First signal: sets the flag and wakes
 // WaitForShutdown(). Second signal: _Exit(128 + sig) immediately -- the
 // graceful path never holds the user hostage.
 void InstallShutdownHandlers();
 
-// Sets the flag and wakes waiters. Callable from signal handlers and threads
+// Programmatic shutdown request (e.g. a "quit" console command); same effect
+// as the first SIGINT
+void RequestShutdown();
+
+// True once shutdown has been requested (signal or RequestShutdown)
 bool ShutdownRequested();
 
 // Parks until ShutdownRequested (futex wait; zero CPU, wakes instantly)
 void WaitForShutdown();
 
-// Registers a futex word the signal handler will kick in addition to the
-// flag (the main TaskLoop parks on it). One active registration; Run/Stop of
-// the loop own the register/unregister pairing
-void RegisterShutdownWakeWord(std::atomic<std::uint32_t>* word);
-void UnregisterShutdownWakeWord(std::atomic<std::uint32_t>* word);
+// Registers the event the signal handler will Signal() in addition to the
+// flag (the main TaskLoop parks on it via epoll). One active registration;
+// Run/Stop of the loop own the register/unregister pairing
+void RegisterShutdownWakeEvent(WaitableEvent* event);
+void UnregisterShutdownWakeEvent(WaitableEvent* event);
 
 }  // namespace cts::base
 

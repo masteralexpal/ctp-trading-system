@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include <unistd.h>
+
 #include <gtest/gtest.h>
 
 #include "base/shutdown.h"
@@ -129,6 +131,30 @@ TEST(TaskLoopTest, PendingDelayedTaskIsDroppedOnStop) {
   thread.Start([&] { loop.Run(); });
   thread.Stop();
   EXPECT_FALSE(fired.load());
+}
+
+TEST(TaskLoopTest, WatchedFdFiresOnReadable) {
+  int fds[2];
+  ASSERT_EQ(pipe(fds), 0);
+
+  TaskLoop loop;
+  std::atomic<int> fired{0};
+  loop.WatchFd(fds[0], [&] {
+    ++fired;
+    char c;
+    static_cast<void>(read(fds[0], &c, 1));  // consume
+    loop.Stop();
+  });
+
+  Thread thread{"test-loop"};
+  thread.Start([&] { loop.Run(); });
+  std::this_thread::sleep_for(50ms);  // let it park in epoll_wait
+  static_cast<void>(write(fds[1], "x", 1));
+  thread.Stop();
+
+  EXPECT_EQ(fired.load(), 1);
+  close(fds[0]);
+  close(fds[1]);
 }
 
 }  // namespace

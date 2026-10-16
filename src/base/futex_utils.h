@@ -5,8 +5,8 @@
  */
 #pragma once
 
-#ifndef CTS_BASE_DETAIL_FUTEX_H_
-#define CTS_BASE_DETAIL_FUTEX_H_
+#ifndef CTS_BASE_FUTEX_UTILS_H_
+#define CTS_BASE_FUTEX_UTILS_H_
 
 // Internal: raw futex syscalls. Do NOT mix with std::atomic::wait/notify --
 // libstdc++ routes those through a waiter pool, not the value's own address,
@@ -46,4 +46,4 @@ inline void FutexWait(std::atomic<std::uint32_t>& word,
 
 }  // namespace cts::base::detail
 
-#endif  // CTS_BASE_DETAIL_FUTEX_H_
+#endif  // CTS_BASE_FUTEX_UTILS_H_

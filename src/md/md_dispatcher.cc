@@ -7,7 +7,7 @@
 
 #include <optional>
 
-#include "base/detail/futex.h"
+#include "base/futex_utils.h"
 
 namespace cts::md {
 

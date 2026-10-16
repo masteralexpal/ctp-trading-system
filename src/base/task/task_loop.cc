@@ -1,58 +1,71 @@
 /**
  * @file task_loop.cc
  * @author lipingan (lipingan.dev@outlook.com)
- * @brief Task-centric event loop (Chromium MessageLoop spirit, minimal).
+ * @brief Task-centric event loop (Chromium MessagePump spirit, minimal).
  */
 #include "base/task/task_loop.h"
 
-#include "base/detail/futex.h"
+#include <sys/epoll.h>
+#include <unistd.h>
+
 #include "base/shutdown.h"
 
 namespace cts::base {
 
-void TaskLoop::PostTask(Task task) {
-  {
-    std::lock_guard lock(mutex_);
-    incoming_.push_back(std::move(task));
+TaskLoop::TaskLoop() {
+  epoll_fd_ = epoll_create1(EPOLL_CLOEXEC);
+  epoll_event ev{};
+  ev.events = EPOLLIN;
+  ev.data.fd = wake_event_.fd();
+  epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, wake_event_.fd(), &ev);
+}
+
+TaskLoop::~TaskLoop() {
+  if (epoll_fd_ >= 0) {
+    close(epoll_fd_);
   }
-  wake_.fetch_add(1, std::memory_order_release);
-  detail::FutexWakeOne(wake_);
+}
+
+void TaskLoop::PostTask(Task task) {
+  task_queue_.Push(std::move(task));
+  wake_event_.Signal();
 }
 
 void TaskLoop::PostDelayedTask(Task task, std::chrono::milliseconds delay) {
+  task_queue_.PushDelayed(std::move(task), delay);
+  wake_event_.Signal();
+}
+
+void TaskLoop::WatchFd(int fd, Task cb) {
   {
     std::lock_guard lock(mutex_);
-    delayed_.push({std::chrono::steady_clock::now() + delay, next_seq_++,
-                   std::move(task)});
+    watchers_[fd] = std::make_shared<Task>(std::move(cb));
+    epoll_event ev{};
+    ev.events = EPOLLIN;
+    ev.data.fd = fd;
+    epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev);
   }
-  wake_.fetch_add(1, std::memory_order_release);
-  detail::FutexWakeOne(wake_);
+  // A newly watched fd may already be readable while Run() parks with an
+  // infinite timeout
+  wake_event_.Signal();
+}
+
+void TaskLoop::UnwatchFd(int fd) {
+  std::lock_guard lock(mutex_);
+  watchers_.erase(fd);
+  epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
 }
 
 void TaskLoop::Stop() {
   stop_.store(true, std::memory_order_release);
-  wake_.fetch_add(1, std::memory_order_release);
-  detail::FutexWakeOne(wake_);
+  wake_event_.Signal();
 }
 
 void TaskLoop::Run() {
-  RegisterShutdownWakeWord(&wake_);
+  RegisterShutdownWakeEvent(&wake_event_);
   std::vector<Task> work;
   for (;;) {
-    auto const now = std::chrono::steady_clock::now();
-    {
-      std::lock_guard lock(mutex_);
-      while (!delayed_.empty() && delayed_.top().due <= now) {
-        // priority_queue::top() is const; the pop below discards the node
-        work.push_back(
-            std::move(const_cast<DelayedTask&>(delayed_.top()).task));
-        delayed_.pop();
-      }
-      for (auto& task : incoming_) {
-        work.push_back(std::move(task));
-      }
-      incoming_.clear();
-    }
+    task_queue_.TakeWork(work);
     for (auto& task : work) {
       task();
     }
@@ -60,39 +73,55 @@ void TaskLoop::Run() {
 
     if (stop_.load(std::memory_order_acquire) || ShutdownRequested()) {
       // Final drain of plain tasks; delayed tasks are dropped
-      {
-        std::lock_guard lock(mutex_);
-        for (auto& task : incoming_) {
-          task();
-        }
-        incoming_.clear();
+      task_queue_.TakeWork(work);
+      for (auto& task : work) {
+        task();
       }
-      UnregisterShutdownWakeWord(&wake_);
+      UnregisterShutdownWakeEvent(&wake_event_);
       return;
     }
 
-    // Park. Posters bump wake_ after unlocking, so the protocol is: confirm
-    // empty under the mutex, sample wake_ last, then wait on that sample --
-    // any post after the sample either changes the word (EAGAIN) or wakes us
-    std::optional<std::chrono::milliseconds> timeout;
-    std::uint32_t sample;
+    // Zero-timeout IO sweep before parking (Chromium's Run rhythm): ready IO
+    // is handled while we are awake; if any fired, loop around and re-take
+    // work instead of sleeping
+    if (WaitForEvents(0) > 0) {
+      continue;
+    }
+
+    int timeout_ms = -1;
+    if (auto const to_next = task_queue_.TimeToNextTask()) {
+      timeout_ms = static_cast<int>(to_next->count());
+    }
+
+    // Park: the wake event is level-triggered, so any Signal() before this
+    // point keeps it readable and epoll_wait returns immediately -- no lost
+    // wakeup by construction
+    WaitForEvents(timeout_ms);
+  }
+}
+
+int TaskLoop::WaitForEvents(int timeout_ms) {
+  epoll_event events[16];
+  int const n = epoll_wait(epoll_fd_, events, 16, timeout_ms);
+  for (int i = 0; i < n; ++i) {
+    int const fd = events[i].data.fd;
+    if (fd == wake_event_.fd()) {
+      wake_event_.Reset();  // consume; the queue is re-read at loop top
+      continue;
+    }
+    std::shared_ptr<Task> cb;
     {
       std::lock_guard lock(mutex_);
-      if (!incoming_.empty()) {
-        continue;
+      auto const it = watchers_.find(fd);
+      if (it != watchers_.end()) {
+        cb = it->second;
       }
-      if (!delayed_.empty() && delayed_.top().due <= now) {
-        continue;
-      }
-      if (!delayed_.empty()) {
-        timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
-                      delayed_.top().due - now) +
-                  std::chrono::milliseconds{1};
-      }
-      sample = wake_.load(std::memory_order_acquire);
     }
-    detail::FutexWait(wake_, sample, timeout);
+    if (cb && *cb) {
+      (*cb)();
+    }
   }
+  return n;
 }
 
 }  // namespace cts::base

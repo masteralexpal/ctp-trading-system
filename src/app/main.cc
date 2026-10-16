@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "app/cli.h"
+#include "app/console.h"
 #include "base/shutdown.h"
 #include "base/task/task_loop.h"
 #include "base/thread.h"
@@ -20,6 +21,7 @@
 #include "md/md_gateway.h"
 
 #include <spdlog/async.h>
+#include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
@@ -138,6 +140,10 @@ int RunTrading(cts::app::AppConfig const& cfg) {
   };
   loop.PostDelayedTask(HealthTick{&loop, &dispatcher},
                        std::chrono::seconds{60});
+
+  // Dev console: stdin lines become tasks on this loop; no-op without a TTY
+  cts::app::Console console{loop, md_gateway, dispatcher};
+  console.Start();
 
   loop.Run();
   SPDLOG_INFO("shutdown requested, draining");
