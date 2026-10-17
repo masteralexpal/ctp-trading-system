@@ -65,8 +65,6 @@ void DumpConfig(cts::app::AppConfig const& cfg) {
               cfg.trader_front.empty() ? "(unset)" : cfg.trader_front);
   SPDLOG_INFO("dry-run:      {}", cfg.dry_run);
   SPDLOG_INFO("flow-dir:     {}", cfg.flow_dir);
-  SPDLOG_INFO("record-dir:   {}",
-              cfg.record_dir.empty() ? "(disabled)" : cfg.record_dir);
   for (auto const& instrument : cfg.instruments) {
     SPDLOG_INFO("instrument:   {}", instrument);
   }

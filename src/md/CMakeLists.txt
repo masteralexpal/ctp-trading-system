@@ -21,6 +21,9 @@ target_sources(
                 md_dispatcher.h
                 md_gateway.h
                 md_client.h
+                # The raw tap interface stays here: MdSpiAdapter fires it.
+                # The journal format + recorder live in src/recorder.
+                raw_tick_sink.h
                 tick.h
                 # detail/md_event.h rides along: md_dispatcher.h's queue member
                 # needs the complete type. Still internal -- do not include
@@ -30,9 +33,10 @@ target_sources(
 
 target_link_libraries(
     md
-    # CTP is confined to md's .cc files; public headers are vendor-free
-    PUBLIC cts::config cts::base
-    PRIVATE third_party::ctp_md third_party::spdlog
+    # raw_tick_sink.h exposes the verbatim CTP wire struct, so ctp_md is
+    # PUBLIC; normalized consumers still never see CTP types
+    PUBLIC cts::config cts::base third_party::ctp_md
+    PRIVATE third_party::spdlog
 )
 
 add_library(cts::md ALIAS md)

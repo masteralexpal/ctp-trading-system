@@ -45,8 +45,6 @@ std::unique_ptr<CLI::App> BuildApp(AppConfig& cfg) {
         home != nullptr ? std::string(home) + "/.cts/flow" : ".cts/flow";
   }
   app->add_option("--flow-dir", cfg.flow_dir, "root dir of CTP flow files");
-  app->add_option("--record-dir", cfg.record_dir,
-                  "tick recording dir (empty disables recording)");
   app->add_option("--strategy-instrument", cfg.strategy_instrument,
                   "run the SMA-cross demo strategy on this instrument "
                   "(empty disables)");
