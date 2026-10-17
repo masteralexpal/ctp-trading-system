@@ -128,6 +128,44 @@ std::string OrderManager::trading_day() const {
   return current_day_;
 }
 
+std::vector<OrderManager::CloseLeg> OrderManager::PlanClose(
+    std::string_view instrument_id,
+    td::Direction position_side,
+    std::int32_t volume,
+    std::string_view exchange_id) const {
+  std::lock_guard lock(mutex_);
+  std::int32_t today = 0;
+  std::int32_t yd = 0;
+  if (auto const it =
+          ledger_.find(Key{std::string(instrument_id), position_side});
+      it != ledger_.end()) {
+    today = it->second.today_volume;
+    yd = it->second.yd_volume;
+  }
+  bool const split = exchange_id == "SHFE" || exchange_id == "INE";
+  if (!split) {
+    if (volume <= today + yd) {
+      return {{td::Offset::kClose, volume}};
+    }
+    return {};
+  }
+  // Today bucket first, yesterday covers the overflow
+  std::vector<CloseLeg> legs;
+  std::int32_t left = volume;
+  if (std::int32_t const v = std::min(left, today); v > 0) {
+    legs.push_back({td::Offset::kCloseToday, v});
+    left -= v;
+  }
+  if (std::int32_t const v = std::min(left, yd); v > 0) {
+    legs.push_back({td::Offset::kCloseYesterday, v});
+    left -= v;
+  }
+  if (left > 0) {
+    return {};  // position cannot cover the request
+  }
+  return legs;
+}
+
 void OrderManager::RollTradingDay(std::string_view day) {
   if (day.empty() || day == current_day_) {
     return;

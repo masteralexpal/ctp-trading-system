@@ -34,11 +34,12 @@ struct FakeSink final : td::OrderSink {
 
 td::OrderRequest MakeReq(int volume = 1,
                          double price = 3500.0,
-                         td::Offset offset = td::Offset::kOpen) {
+                         td::Offset offset = td::Offset::kOpen,
+                         td::Direction direction = td::Direction::kBuy) {
   td::OrderRequest req{};
   std::strncpy(req.instrument_id, "rb2701", sizeof(req.instrument_id) - 1);
   std::strncpy(req.exchange_id, "SHFE", sizeof(req.exchange_id) - 1);
-  req.direction = td::Direction::kBuy;
+  req.direction = direction;
   req.offset = offset;
   req.limit_price = price;
   req.volume = volume;
@@ -110,9 +111,12 @@ TEST_F(CheckedOrderSinkTest, PositionCapCountsNetAfterOpen) {
   // cap 3, net +2: +1 ok, +2 would reach 4
   EXPECT_FALSE(sink_.InsertOrder(MakeReq(1)).empty());
   EXPECT_TRUE(sink_.InsertOrder(MakeReq(2)).empty());
-  // Closes are exempt from the position cap
+  // Closes are exempt from the position cap (sell closes the long)
   EXPECT_FALSE(
-      sink_.InsertOrder(MakeReq(2, 3500, td::Offset::kCloseToday)).empty());
+      sink_
+          .InsertOrder(MakeReq(2, 3500, td::Offset::kCloseToday,
+                               td::Direction::kSell))
+          .empty());
 }
 
 TEST_F(CheckedOrderSinkTest, MarginEstimateRejectsOverAvailable) {
@@ -150,6 +154,64 @@ TEST_F(CheckedOrderSinkTest, MarginEstimateRejectsOverAvailable) {
 TEST_F(CheckedOrderSinkTest, MarginCheckSkippedWhenInputsUnknown) {
   // No rate table, no account: opens must not be blocked
   EXPECT_FALSE(sink_.InsertOrder(MakeReq(1)).empty());
+}
+
+void OpenLongOn(OrderManager& ledger, char const* day, int volume) {
+  td::TradeReport t{};
+  std::strncpy(t.instrument_id, "rb2701", sizeof(t.instrument_id) - 1);
+  std::strncpy(t.trading_day, day, sizeof(t.trading_day) - 1);
+  t.direction = td::Direction::kBuy;
+  t.offset = td::Offset::kOpen;
+  t.price = 3500;
+  t.volume = volume;
+  ledger.OnTdTrade(t);
+}
+
+TEST_F(CheckedOrderSinkTest, CloseSplitsAcrossBucketsOnShfe) {
+  OpenLongOn(ledger_, "20261016", 1);  // rolled to yd by the next day's trade
+  OpenLongOn(ledger_, "20261017", 1);  // today
+  // A blind close-today of 2 must come out as today 1 + yesterday 1
+  EXPECT_FALSE(sink_
+                   .InsertOrder(MakeReq(2, 3500, td::Offset::kCloseToday,
+                                        td::Direction::kSell))
+                   .empty());
+  ASSERT_EQ(inner_.inserted.size(), 2u);
+  EXPECT_EQ(inner_.inserted[0].offset, td::Offset::kCloseToday);
+  EXPECT_EQ(inner_.inserted[0].volume, 1);
+  EXPECT_EQ(inner_.inserted[1].offset, td::Offset::kCloseYesterday);
+  EXPECT_EQ(inner_.inserted[1].volume, 1);
+}
+
+TEST_F(CheckedOrderSinkTest, CloseBeyondPositionIsRejected) {
+  OpenLong(1);  // today=1 only
+  EXPECT_TRUE(sink_
+                  .InsertOrder(MakeReq(2, 3500, td::Offset::kCloseToday,
+                                       td::Direction::kSell))
+                  .empty());
+  EXPECT_TRUE(inner_.inserted.empty());
+}
+
+TEST_F(CheckedOrderSinkTest, CloseOnPlainExchangeIsSingleLeg) {
+  td::TradeReport t{};
+  std::strncpy(t.instrument_id, "i2701", sizeof(t.instrument_id) - 1);
+  std::strncpy(t.trading_day, "20261017", sizeof(t.trading_day) - 1);
+  t.direction = td::Direction::kBuy;
+  t.offset = td::Offset::kOpen;
+  t.price = 800;
+  t.volume = 2;
+  ledger_.OnTdTrade(t);
+
+  td::OrderRequest req{};
+  std::strncpy(req.instrument_id, "i2701", sizeof(req.instrument_id) - 1);
+  std::strncpy(req.exchange_id, "DCE", sizeof(req.exchange_id) - 1);
+  req.direction = td::Direction::kSell;
+  req.offset = td::Offset::kClose;
+  req.limit_price = 800;
+  req.volume = 2;
+  EXPECT_FALSE(sink_.InsertOrder(req).empty());
+  ASSERT_EQ(inner_.inserted.size(), 1u);
+  EXPECT_EQ(inner_.inserted[0].offset, td::Offset::kClose);
+  EXPECT_EQ(inner_.inserted[0].volume, 2);
 }
 
 }  // namespace

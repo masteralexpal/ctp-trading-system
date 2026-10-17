@@ -31,9 +31,9 @@ struct SmaCrossConfig {
 // crossing below goes short (both capped at max_pos, one working order at a
 // time). Entries/exits use aggressive limits: ask for buys, bid for sells.
 //
-// Close offset: SHFE/INE require close-today vs close-yesterday; a fresh
-// session only ever holds today's positions, so closes use kCloseToday there
-// and plain kClose elsewhere.
+// Close offset: the strategy just guesses (close-today on SHFE/INE, plain
+// close elsewhere); the risk sink re-splits every close against the ledger's
+// today/yesterday buckets, so a wrong guess is corrected downstream.
 class SmaCrossStrategy final : public Strategy {
  public:
   SmaCrossStrategy(SmaCrossConfig config, td::OrderSink& order_sink);

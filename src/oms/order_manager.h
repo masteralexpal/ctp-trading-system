@@ -95,6 +95,18 @@ class OrderManager final : public td::TdClient {
   // Latest account snapshot; nullopt before the first QueryAccount answer
   std::optional<td::AccountReport> account() const;
 
+  struct CloseLeg {
+    td::Offset offset;
+    std::int32_t volume;
+  };
+  // Splits a close into today/yesterday legs per the ledger buckets
+  // (SHFE/INE distinguish them; other exchanges close plain, single leg).
+  // Empty = the position cannot cover the requested volume. Any thread
+  std::vector<CloseLeg> PlanClose(std::string_view instrument_id,
+                                  td::Direction position_side,
+                                  std::int32_t volume,
+                                  std::string_view exchange_id) const;
+
  private:
   struct Key {
     std::string instrument_id;

@@ -86,6 +86,35 @@ std::string CheckedOrderSink::InsertOrder(td::OrderRequest const& req) {
     }
   }
 
+  // Closes: the requester's today/yesterday guess is corrected against the
+  // ledger buckets (SHFE/INE split); one request may become two legs
+  if (req.offset != td::Offset::kOpen) {
+    td::Direction const side = req.direction == td::Direction::kBuy
+                                   ? td::Direction::kSell
+                                   : td::Direction::kBuy;
+    auto const legs =
+        ledger_.PlanClose(req.instrument_id, side, req.volume, req.exchange_id);
+    if (legs.empty()) {
+      SPDLOG_WARN("risk: close rejected, position cannot cover {} lots of {}",
+                  req.volume, req.instrument_id);
+      return {};
+    }
+    std::string first_ref;
+    for (auto const& leg : legs) {
+      td::OrderRequest r = req;
+      r.offset = leg.offset;
+      r.volume = leg.volume;
+      std::string const ref = inner_.InsertOrder(r);
+      if (ref.empty()) {
+        SPDLOG_WARN("risk: close leg rejected, {} lots of {} unsent",
+                    leg.volume, req.instrument_id);
+      } else if (first_ref.empty()) {
+        first_ref = ref;
+      }
+    }
+    return first_ref;
+  }
+
   return inner_.InsertOrder(req);
 }
 
