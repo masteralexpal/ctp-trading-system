@@ -6,9 +6,12 @@
 #include "app/console.h"
 
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <charconv>
+#include <chrono>
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -94,10 +97,18 @@ Console::Console(base::TaskLoop& loop,
       strategy_(strategy) {}
 
 void Console::Start() {
-  if (!isatty(STDIN_FILENO)) {
-    SPDLOG_INFO("console: stdin is not a TTY, console disabled");
+  // stdin modes:
+  //   TTY   -- interactive REPL
+  //   FIFO  -- scripted: `printf 'positions\nquit\n' | cts_app`; EOF = done,
+  //            request a graceful shutdown (the script's implicit quit)
+  //   other -- /dev/null, regular file: daemon mode, console disabled
+  struct stat st {};
+  if (fstat(STDIN_FILENO, &st) != 0 ||
+      (!S_ISFIFO(st.st_mode) && !(S_ISCHR(st.st_mode) && isatty(STDIN_FILENO)))) {
+    SPDLOG_INFO("console: stdin is neither TTY nor pipe, console disabled");
     return;
   }
+  eof_shutdown_ = S_ISFIFO(st.st_mode);
   // Nonblocking: OnReadable drains until EAGAIN
   fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL) | O_NONBLOCK);
   std::cout << "console ready; 'help' for commands\n> " << std::flush;
@@ -120,6 +131,9 @@ void Console::OnReadable() {
       }
     } else if (n == 0) {
       loop_.UnwatchFd(STDIN_FILENO);  // EOF: stdin closed
+      if (eof_shutdown_) {
+        base::RequestShutdown();  // scripted pipe drained: implicit quit
+      }
       return;
     } else {
       return;  // EAGAIN: drained
@@ -222,14 +236,19 @@ void Console::Execute(std::string_view line) {
     }
   } else if (cmd == "reconcile") {
     int const rc = td_gateway_.QueryPositions();
-    std::cout << (rc == 0 ? "position query sent; answer arrives async\n"
+    // Spaced ~1.3s for the CTP query throttle (~1 query/sec)
+    loop_.PostDelayedTask([this] { td_gateway_.QueryAccount(); },
+                          std::chrono::milliseconds{1300});
+    std::cout << (rc == 0 ? "position+account queries sent; answers arrive "
+                            "async\n"
                           : "rejected (td not ready)\n");
   } else if (cmd == "account") {
     auto const acc = order_manager_.account();
     if (!acc) {
       std::cout << "no account snapshot yet (reconcile first)\n";
     } else {
-      std::cout << "balance:   " << acc->balance
+      std::cout << std::fixed << std::setprecision(2)
+                << "balance:   " << acc->balance
                 << "\navailable: " << acc->available
                 << "\nmargin:    " << acc->margin
                 << "\nfrozen:    " << acc->frozen_margin

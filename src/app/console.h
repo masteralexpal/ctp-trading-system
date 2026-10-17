@@ -39,7 +39,8 @@ namespace cts::app {
 // (stdin) and command handling are deliberately separated; a TCP admin
 // socket is a later transport for the same command set.
 //
-// Degrades silently: not started when stdin is not a TTY (daemon mode).
+// Degrades by stdin type (see Start): TTY = interactive, FIFO = scripted
+// (EOF shuts the process down), anything else = daemon, console off.
 class Console {
  public:
   Console(base::TaskLoop& loop,
@@ -54,7 +55,7 @@ class Console {
   Console(Console const&) = delete;
   Console& operator=(Console const&) = delete;
 
-  // Watches stdin on the loop; no-op when stdin is not a TTY
+  // Watches stdin on the loop; no-op when stdin is neither TTY nor pipe
   void Start();
 
  private:
@@ -69,6 +70,7 @@ class Console {
   oms::CheckedOrderSink& risk_sink_;  // all order flow goes through risk
   strategy::SmaCrossStrategy* strategy_;
   std::string pending_;  // partial line between reads
+  bool eof_shutdown_{false};  // FIFO mode: EOF requests graceful shutdown
 };
 
 }  // namespace cts::app

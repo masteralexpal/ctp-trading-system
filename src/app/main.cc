@@ -4,8 +4,10 @@
  * @brief main function entry point.
  */
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -100,22 +102,28 @@ bool WaitTdReady(cts::td::TdDispatcher const& dispatcher,
 }
 
 // Re-fires reconciliation queries after every (re)connect, spaced to respect
-// the CTP query throttle (~1 query/sec)
+// the CTP query throttle (~1 query/sec). Startup is special: OnTdReady fires
+// while the main loop is still blocked on the instrument master, so delayed
+// tasks posted there all collide the instant the loop starts and the throttle
+// eats one. Begin() is called by the main thread once the instrument query is
+// done (the throttle window is quiet then); reconnects re-fire via OnTdReady
 class Reconciler final : public cts::td::TdClient {
  public:
   Reconciler(cts::base::TaskLoop& loop, cts::td::TdGateway& gateway)
       : loop_(loop), gateway_(gateway) {}
 
+  // Main thread, after the instrument master load
+  void Begin() {
+    begun_.store(true, std::memory_order_release);
+    Fire();
+  }
+
   void OnTdConnected() override {}
   void OnTdDisconnected(int /*reason*/) override {}
   void OnTdReady(bool success, std::string_view /*msg*/) override {
-    if (!success) {
-      return;
+    if (success && begun_.load(std::memory_order_acquire)) {
+      Fire();
     }
-    loop_.PostDelayedTask([this] { gateway_.QueryPositions(); },
-                          std::chrono::milliseconds{1200});
-    loop_.PostDelayedTask([this] { gateway_.QueryAccount(); },
-                          std::chrono::milliseconds{2400});
   }
   void OnTdOrder(cts::td::OrderReport const& /*order*/) override {}
   void OnTdTrade(cts::td::TradeReport const& /*trade*/) override {}
@@ -125,8 +133,17 @@ class Reconciler final : public cts::td::TdClient {
   void OnTdError(int, std::string_view) override {}
 
  private:
+  // Fires both queries, spaced for the throttle; any thread (via the loop)
+  void Fire() {
+    loop_.PostDelayedTask([this] { gateway_.QueryPositions(); },
+                          std::chrono::milliseconds{0});
+    loop_.PostDelayedTask([this] { gateway_.QueryAccount(); },
+                          std::chrono::milliseconds{1300});
+  }
+
   cts::base::TaskLoop& loop_;
   cts::td::TdGateway& gateway_;
+  std::atomic<bool> begun_{false};
 };
 
 // Main pipeline: md + td gateways -> instrument master -> strategy ->
@@ -232,6 +249,11 @@ int RunTrading(cts::app::AppConfig const& cfg) {
     order_manager.SetInstrumentMaster(master);
   }
 
+  // The instrument query stream is over; the throttle window is quiet now.
+  // Kick position/account reconciliation from here (not from OnTdReady --
+  // delayed tasks posted there would all collide the moment the loop starts)
+  reconciler.Begin();
+
   // Pre-trade risk gate: all order flow (console + strategy) goes through it.
   // Position/account reconciliation is the Reconciler's job (throttle-spaced)
   cts::oms::CheckedOrderSink risk_sink{td_gateway, order_manager, {}};
@@ -322,6 +344,13 @@ int main(int argc, char** argv) {
   auto const& cfg = cts::app::GetAppConfig();
   InitLogging(cfg);
   DumpConfig(cfg);
+
+  // Terminal lifeline: all logs now go to the file; say where, and warn that
+  // the console prompt only appears after the instrument master load
+  std::cout << "cts_app " << cts::base::Version()
+            << "; logs: " << cfg.log_dir << "/cts_YYYY-MM-DD.log\n"
+            << "loading instruments, console activates shortly..."
+            << std::endl;
 
   if (cfg.dry_run) {
     SPDLOG_INFO("dry-run mode, exiting.");
