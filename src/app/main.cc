@@ -20,6 +20,7 @@
 #include "md/console_md_client.h"
 #include "md/md_dispatcher.h"
 #include "md/md_gateway.h"
+#include "oms/order_manager.h"
 #include "strategy/sma_cross_strategy.h"
 #include "td/console_td_client.h"
 #include "td/td_dispatcher.h"
@@ -110,8 +111,10 @@ int RunTrading(cts::app::AppConfig const& cfg) {
 
   // --- td side ---
   cts::td::ConsoleTdClient td_client;
+  cts::oms::OrderManager order_manager;  // order journal + position ledger
   cts::td::TdDispatcher td_dispatcher;
   td_dispatcher.AddClient(td_client);
+  td_dispatcher.AddClient(order_manager);
 
   cts::base::Thread td_dispatch_thread{"td-dispatch"};
   td_dispatch_thread.Start([&td_dispatcher] { td_dispatcher.Run(); });
@@ -185,7 +188,11 @@ int RunTrading(cts::app::AppConfig const& cfg) {
     SPDLOG_WARN("td: instrument query timed out; order routing unavailable");
   } else {
     SPDLOG_INFO("td: instrument master loaded, {} instruments", master->size());
+    order_manager.SetInstrumentMaster(master);
   }
+
+  // Reconcile the ledger against the broker snapshot (empty when flat)
+  td_gateway.QueryPositions();
 
   if (!cfg.instruments.empty()) {
     if (md_gateway.Subscribe(cfg.instruments) == 0) {
@@ -238,7 +245,7 @@ int RunTrading(cts::app::AppConfig const& cfg) {
 
   // Dev console: stdin lines become tasks on this loop; no-op without a TTY
   cts::app::Console console{loop,       md_gateway, dispatcher,
-                            td_gateway, strategy.get()};
+                            td_gateway, order_manager, strategy.get()};
   console.Start();
 
   loop.Run();

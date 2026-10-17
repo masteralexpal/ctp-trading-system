@@ -20,6 +20,7 @@
 #include "base/string_utils.h"
 #include "md/md_dispatcher.h"
 #include "md/md_gateway.h"
+#include "oms/order_manager.h"
 #include "strategy/sma_cross_strategy.h"
 #include "td/td_gateway.h"
 
@@ -56,17 +57,37 @@ td::Offset ParseOffset(std::string_view word, bool& ok) {
   return td::Offset::kOpen;
 }
 
+char const* StatusName(td::OrderStatus s) {
+  switch (s) {
+    case td::OrderStatus::kSubmitted:
+      return "submitted";
+    case td::OrderStatus::kPartTraded:
+      return "part-traded";
+    case td::OrderStatus::kAllTraded:
+      return "all-traded";
+    case td::OrderStatus::kCanceled:
+      return "canceled";
+    case td::OrderStatus::kRejected:
+      return "rejected";
+    case td::OrderStatus::kUnknown:
+      return "unknown";
+  }
+  return "?";
+}
+
 }  // namespace
 
 Console::Console(base::TaskLoop& loop,
                  md::MdGateway& md_gateway,
                  md::MdDispatcher const& md_dispatcher,
                  td::TdGateway& td_gateway,
+                 oms::OrderManager& order_manager,
                  strategy::SmaCrossStrategy* strategy)
     : loop_(loop),
       md_gateway_(md_gateway),
       md_dispatcher_(md_dispatcher),
       td_gateway_(td_gateway),
+      order_manager_(order_manager),
       strategy_(strategy) {}
 
 void Console::Start() {
@@ -117,6 +138,9 @@ void Console::Execute(std::string_view line) {
                  "                       submit a limit order (offset: open "
                  "(default)|close|close-today|close-yesterday)\n"
                  "cancel <order_ref>     cancel a working order\n"
+                 "orders                 order journal (OMS)\n"
+                 "positions              position ledger (OMS)\n"
+                 "reconcile              query broker positions into the OMS\n"
                  "strategy [start|stop]  strategy status/control\n"
                  "log-level <level>      trace|debug|info|warn|error\n"
                  "quit                   graceful shutdown\n";
@@ -166,6 +190,32 @@ void Console::Execute(std::string_view line) {
       std::cout << (rc == 0 ? "cancel accepted\n"
                             : "cancel rejected (unknown ref or not ready)\n");
     }
+  } else if (cmd == "orders") {
+    auto const orders = order_manager_.orders();
+    std::cout << orders.size() << " orders\n";
+    for (auto const& e : orders) {
+      auto const& r = e.report;
+      std::cout << "  " << r.order_ref << " " << r.instrument_id << " "
+                << (r.direction == td::Direction::kBuy ? "buy" : "sell")
+                << " " << r.volume_traded << "/" << r.volume_total_original
+                << " @" << r.limit_price << " " << StatusName(r.status)
+                << "\n";
+    }
+  } else if (cmd == "positions") {
+    auto const positions = order_manager_.positions();
+    std::cout << positions.size() << " positions (trading day "
+                << order_manager_.trading_day() << ")\n";
+    for (auto const& p : positions) {
+      std::cout << "  " << p.instrument_id << " "
+                << (p.side == td::Direction::kBuy ? "long" : "short")
+                << " today=" << p.today_volume << " yd=" << p.yd_volume
+                << " avg=" << p.avg_price << " realized=" << p.realized_pnl
+                << "\n";
+    }
+  } else if (cmd == "reconcile") {
+    int const rc = td_gateway_.QueryPositions();
+    std::cout << (rc == 0 ? "position query sent; answer arrives async\n"
+                          : "rejected (td not ready)\n");
   } else if (cmd == "strategy") {
     if (strategy_ == nullptr) {
       std::cout << "no strategy configured (--strategy-instrument)\n";

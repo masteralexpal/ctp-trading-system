@@ -22,6 +22,10 @@ namespace cts::td {
 class TdGateway;
 }
 
+namespace cts::oms {
+class OrderManager;
+}
+
 namespace cts::strategy {
 class SmaCrossStrategy;
 }
@@ -41,6 +45,7 @@ class Console {
           md::MdGateway& md_gateway,
           md::MdDispatcher const& md_dispatcher,
           td::TdGateway& td_gateway,
+          oms::OrderManager& order_manager,
           strategy::SmaCrossStrategy* strategy);  // nullptr = no strategy
   ~Console() = default;
 
@@ -58,6 +63,7 @@ class Console {
   md::MdGateway& md_gateway_;
   md::MdDispatcher const& md_dispatcher_;
   td::TdGateway& td_gateway_;
+  oms::OrderManager& order_manager_;
   strategy::SmaCrossStrategy* strategy_;
   std::string pending_;  // partial line between reads
 };

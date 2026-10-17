@@ -6,6 +6,7 @@ target_link_libraries(
         cts::config
         cts::base
         cts::md
+        cts::oms
         cts::strategy
         cts::td
         third_party::cli11
