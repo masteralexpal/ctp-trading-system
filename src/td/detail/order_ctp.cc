@@ -175,7 +175,7 @@ AccountReport AccountReportFromCtp(CThostFtdcTradingAccountField const& f) {
 
 MarginRate MarginRateFromCtp(CThostFtdcInstrumentMarginRateField const& f) {
   MarginRate r{};
-  base::CopyToFixedArray(r.instrument_id, f.reserve1);
+  base::CopyToFixedArray(r.instrument_id, f.InstrumentID);
   r.long_ratio = f.LongMarginRatioByMoney;
   r.short_ratio = f.ShortMarginRatioByMoney;
   return r;
@@ -184,7 +184,7 @@ MarginRate MarginRateFromCtp(CThostFtdcInstrumentMarginRateField const& f) {
 CommissionRate CommissionRateFromCtp(
     CThostFtdcInstrumentCommissionRateField const& f) {
   CommissionRate r{};
-  base::CopyToFixedArray(r.instrument_id, f.reserve1);
+  base::CopyToFixedArray(r.instrument_id, f.InstrumentID);
   r.open_by_money = f.OpenRatioByMoney;
   r.open_by_volume = f.OpenRatioByVolume;
   r.close_by_money = f.CloseRatioByMoney;

@@ -461,10 +461,10 @@ TEST_F(TdGatewayTest, MarginRateLandsInRateTable) {
   ReadyUp();
   EXPECT_EQ(gateway.QueryMarginRate("rb2701"), 0);
   EXPECT_EQ(fake->qry_margin_calls, 1);
-  EXPECT_STREQ(fake->qry_margin_req.reserve1, "rb2701");
+  EXPECT_STREQ(fake->qry_margin_req.InstrumentID, "rb2701");
 
   CThostFtdcInstrumentMarginRateField rate{};
-  std::strcpy(rate.reserve1, "rb2701");
+  std::strcpy(rate.InstrumentID, "rb2701");
   rate.LongMarginRatioByMoney = 0.12;
   rate.ShortMarginRatioByMoney = 0.14;
   fake->spi->OnRspQryInstrumentMarginRate(&rate, nullptr, 1, true);
@@ -483,7 +483,7 @@ TEST_F(TdGatewayTest, CommissionRateLandsInRateTable) {
   EXPECT_EQ(fake->qry_commission_calls, 1);
 
   CThostFtdcInstrumentCommissionRateField rate{};
-  std::strcpy(rate.reserve1, "rb2701");
+  std::strcpy(rate.InstrumentID, "rb2701");
   rate.OpenRatioByMoney = 0.0001;
   rate.CloseTodayRatioByVolume = 3.0;
   fake->spi->OnRspQryInstrumentCommissionRate(&rate, nullptr, 1, true);

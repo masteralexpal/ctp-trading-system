@@ -237,7 +237,8 @@ int TdSpiAdapter::QueryMarginRate(std::string_view instrument_id) {
   CThostFtdcQryInstrumentMarginRateField req{};
   base::CopyToFixedArray(req.BrokerID, config_.broker_id);
   base::CopyToFixedArray(req.InvestorID, config_.investor_id);
-  base::CopyToFixedArray(req.reserve1, instrument_id);  // 6.7.x instrument id
+  // 6.7.x: reserve1 is the dead old field, the real id is InstrumentID
+  base::CopyToFixedArray(req.InstrumentID, instrument_id);
   req.HedgeFlag = THOST_FTDC_HF_Speculation;
   return api_->ReqQryInstrumentMarginRate(&req, request_id_.fetch_add(1) + 1);
 }
@@ -249,7 +250,7 @@ int TdSpiAdapter::QueryCommissionRate(std::string_view instrument_id) {
   CThostFtdcQryInstrumentCommissionRateField req{};
   base::CopyToFixedArray(req.BrokerID, config_.broker_id);
   base::CopyToFixedArray(req.InvestorID, config_.investor_id);
-  base::CopyToFixedArray(req.reserve1, instrument_id);
+  base::CopyToFixedArray(req.InstrumentID, instrument_id);
   return api_->ReqQryInstrumentCommissionRate(&req,
                                               request_id_.fetch_add(1) + 1);
 }

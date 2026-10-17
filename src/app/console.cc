@@ -292,12 +292,23 @@ void Console::Execute(std::string_view line) {
         // Query whatever is missing, throttle-spaced
         if (!margin.has_value()) {
           loop_.PostDelayedTask(
-              [this, id] { td_gateway_.QueryMarginRate(id); },
+              [this, id] {
+                int const rc = td_gateway_.QueryMarginRate(id);
+                if (rc != 0) {
+                  SPDLOG_WARN("td: margin query {} rejected, rc={}", id, rc);
+                }
+              },
               std::chrono::milliseconds{1300 * slot++});
         }
         if (!commission.has_value()) {
           loop_.PostDelayedTask(
-              [this, id] { td_gateway_.QueryCommissionRate(id); },
+              [this, id] {
+                int const rc = td_gateway_.QueryCommissionRate(id);
+                if (rc != 0) {
+                  SPDLOG_WARN("td: commission query {} rejected, rc={}", id,
+                              rc);
+                }
+              },
               std::chrono::milliseconds{1300 * slot++});
         }
       }

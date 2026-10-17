@@ -269,10 +269,20 @@ int RunTrading(cts::app::AppConfig const& cfg) {
         continue;  // not a listed instrument; do not waste a query on it
       }
       loop.PostDelayedTask(
-          [&td_gateway, id] { td_gateway.QueryMarginRate(id); },
+          [&td_gateway, id] {
+            int const rc = td_gateway.QueryMarginRate(id);
+            if (rc != 0) {
+              SPDLOG_WARN("td: margin query {} rejected, rc={}", id, rc);
+            }
+          },
           std::chrono::milliseconds{1300 * slot++});
       loop.PostDelayedTask(
-          [&td_gateway, id] { td_gateway.QueryCommissionRate(id); },
+          [&td_gateway, id] {
+            int const rc = td_gateway.QueryCommissionRate(id);
+            if (rc != 0) {
+              SPDLOG_WARN("td: commission query {} rejected, rc={}", id, rc);
+            }
+          },
           std::chrono::milliseconds{1300 * slot++});
     }
   }
