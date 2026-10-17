@@ -41,6 +41,11 @@ class SmaCrossStrategy final : public Strategy {
   void OnTick(md::Tick const& tick) override;             // md-dispatch thread
   void OnTdOrder(td::OrderReport const& order) override;  // td-dispatch thread
   void OnTdTrade(td::TradeReport const& trade) override;  // td-dispatch thread
+  // Resyncs the virtual position from the broker snapshot (restart/reconnect
+  // recovery); skipped while an order is in flight -- the snapshot may lag
+  // its fill. td-dispatch thread
+  void OnTdPositions(
+      std::shared_ptr<std::vector<td::PositionRow> const> rows) override;
 
   struct Status {
     int position;

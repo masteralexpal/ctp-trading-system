@@ -125,6 +125,27 @@ void SmaCrossStrategy::OnTdTrade(td::TradeReport const& trade) {
               trade.volume, trade.price, position_);
 }
 
+void SmaCrossStrategy::OnTdPositions(
+    std::shared_ptr<std::vector<td::PositionRow> const> rows) {
+  std::lock_guard lock(mutex_);
+  if (order_in_flight_) {
+    return;  // the snapshot may predate the in-flight fill; wait it out
+  }
+  // Broker truth for our instrument only; absent rows mean flat
+  int net = 0;
+  for (auto const& row : *rows) {
+    if (config_.instrument_id == row.instrument_id) {
+      int const total = row.yd_volume + row.today_volume;
+      net += row.direction == td::Direction::kBuy ? total : -total;
+    }
+  }
+  if (net != position_) {
+    SPDLOG_WARN("strategy {}: position resync {} -> {} (broker snapshot)",
+                name(), position_, net);
+    position_ = net;
+  }
+}
+
 SmaCrossStrategy::Status SmaCrossStrategy::status() const {
   std::lock_guard lock(mutex_);
   return {

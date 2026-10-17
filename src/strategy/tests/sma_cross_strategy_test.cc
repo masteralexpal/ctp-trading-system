@@ -154,5 +154,43 @@ TEST_F(SmaCrossTest, IgnoresOtherInstrumentsAndRefs) {
   EXPECT_EQ(strategy.status().position, 0);
 }
 
+td::PositionRow RowOf(char const* id, td::Direction dir, int yd, int today) {
+  td::PositionRow r{};
+  std::strncpy(r.instrument_id, id, sizeof(r.instrument_id) - 1);
+  r.direction = dir;
+  r.yd_volume = yd;
+  r.today_volume = today;
+  return r;
+}
+
+TEST_F(SmaCrossTest, BrokerSnapshotResyncsPosition) {
+  strategy.Start();
+  // Restart recovery: the account holds a long the strategy knows nothing of
+  auto rows = std::make_shared<std::vector<td::PositionRow>>();
+  rows->push_back(RowOf("rb2701", td::Direction::kBuy, 1, 0));
+  rows->push_back(RowOf("cu2611", td::Direction::kSell, 2, 0));  // not ours
+  strategy.OnTdPositions(rows);
+  EXPECT_EQ(strategy.status().position, 1);
+
+  // Long + short legs net out; absent instruments are flat
+  rows = std::make_shared<std::vector<td::PositionRow>>();
+  rows->push_back(RowOf("rb2701", td::Direction::kBuy, 1, 0));
+  rows->push_back(RowOf("rb2701", td::Direction::kSell, 0, 2));
+  strategy.OnTdPositions(rows);
+  EXPECT_EQ(strategy.status().position, -1);
+}
+
+TEST_F(SmaCrossTest, BrokerSnapshotSkippedWhileOrderInFlight) {
+  strategy.Start();
+  FeedPrices(strategy, {100, 100, 105});  // cross up: buy sent, in flight
+  ASSERT_EQ(sink.inserted.size(), 1u);
+
+  // A snapshot taken before the fill must not regress the local position
+  strategy.OnTdPositions(
+      std::make_shared<std::vector<td::PositionRow>>());  // broker still flat
+  EXPECT_EQ(strategy.status().position, 0);
+  EXPECT_TRUE(strategy.status().order_in_flight);
+}
+
 }  // namespace
 }  // namespace cts::strategy
