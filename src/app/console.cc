@@ -159,6 +159,8 @@ void Console::Execute(std::string_view line) {
                  "positions              position ledger (OMS)\n"
                  "reconcile              query broker positions into the OMS\n"
                  "account                latest account snapshot\n"
+                 "rates <id...>          margin/commission rates (queries "
+                 "missing ones)\n"
                  "kill                   halt orders, stop strategy, cancel all\n"
                  "resume                 clear the kill switch\n"
                  "roll <old> <new> <close_px> <open_px>\n"
@@ -257,6 +259,51 @@ void Console::Execute(std::string_view line) {
                 << "\nfrozen:    " << acc->frozen_margin
                 << "\nclose_pnl: " << acc->close_profit
                 << "\npos_pnl:   " << acc->position_profit << "\n";
+    }
+  } else if (cmd == "rates") {
+    auto const words = SplitWords(args);
+    if (words.empty() || words[0].empty()) {
+      std::cout << "usage: rates <id...>\n";
+    } else {
+      int slot = 0;
+      for (auto const w : words) {
+        std::string const id{w};
+        auto const margin = td_gateway_.rates().FindMargin(id);
+        auto const commission = td_gateway_.rates().FindCommission(id);
+        std::cout << "  " << id << " margin:";
+        if (margin.has_value()) {
+          std::cout << " long=" << margin->long_ratio
+                    << " short=" << margin->short_ratio;
+        } else {
+          std::cout << " -";
+        }
+        std::cout << " commission:";
+        if (commission.has_value()) {
+          std::cout << " open=" << commission->open_by_money << "/"
+                    << commission->open_by_volume
+                    << " close=" << commission->close_by_money << "/"
+                    << commission->close_by_volume
+                    << " close_today=" << commission->close_today_by_money
+                    << "/" << commission->close_today_by_volume;
+        } else {
+          std::cout << " -";
+        }
+        std::cout << "\n";
+        // Query whatever is missing, throttle-spaced
+        if (!margin.has_value()) {
+          loop_.PostDelayedTask(
+              [this, id] { td_gateway_.QueryMarginRate(id); },
+              std::chrono::milliseconds{1300 * slot++});
+        }
+        if (!commission.has_value()) {
+          loop_.PostDelayedTask(
+              [this, id] { td_gateway_.QueryCommissionRate(id); },
+              std::chrono::milliseconds{1300 * slot++});
+        }
+      }
+      if (slot > 0) {
+        std::cout << "queries sent for missing entries, rerun to see them\n";
+      }
     }
   } else if (cmd == "kill") {
     risk_sink_.Halt();

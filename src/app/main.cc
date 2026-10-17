@@ -259,6 +259,24 @@ int RunTrading(cts::app::AppConfig const& cfg) {
   // delayed tasks posted there would all collide the moment the loop starts)
   reconciler.Begin();
 
+  // Pull margin/commission rates for the subscribed instruments, queued
+  // behind the reconcile pair (0/1300 ms) at the same throttle spacing.
+  // The risk gate's margin check reads these
+  {
+    int slot = 2;
+    for (auto const& id : cfg.instruments) {
+      if (master != nullptr && master->Find(id) == nullptr) {
+        continue;  // not a listed instrument; do not waste a query on it
+      }
+      loop.PostDelayedTask(
+          [&td_gateway, id] { td_gateway.QueryMarginRate(id); },
+          std::chrono::milliseconds{1300 * slot++});
+      loop.PostDelayedTask(
+          [&td_gateway, id] { td_gateway.QueryCommissionRate(id); },
+          std::chrono::milliseconds{1300 * slot++});
+    }
+  }
+
   // Pre-trade risk gate: all order flow (console + strategy) goes through it.
   // Position/account reconciliation is the Reconciler's job (throttle-spaced)
   cts::oms::CheckedOrderSink risk_sink{td_gateway, order_manager, {}};
