@@ -6,19 +6,14 @@
 #include "oms/order_manager.h"
 
 #include <algorithm>
-#include <chrono>
 #include <utility>
+
+#include "base/time_utils.h"
 
 #include <spdlog/spdlog.h>
 
 namespace cts::oms {
 namespace {
-
-std::int64_t NowEpochMs() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::system_clock::now().time_since_epoch())
-      .count();
-}
 
 td::Direction Opposite(td::Direction d) {
   return d == td::Direction::kBuy ? td::Direction::kSell : td::Direction::kBuy;
@@ -33,7 +28,7 @@ void OrderManager::OnTdOrder(td::OrderReport const& order) {
   // but only trades touch the ledger (no double counting)
   auto& entry = journal_[order.order_ref];
   entry.report = order;
-  entry.updated_epoch_ms = NowEpochMs();
+  entry.updated_epoch_ms = base::NowEpochMs();
 }
 
 void OrderManager::OnTdTrade(td::TradeReport const& trade) {
@@ -57,12 +52,12 @@ void OrderManager::OnTdPositions(
     }
     if (pos.yd_volume != row.yd_volume ||
         pos.today_volume != row.today_volume) {
-      SPDLOG_WARN("oms: reconcile {} {} local(today={} yd={}) broker(today={} "
-                  "yd={}), adopting broker",
-                  row.instrument_id,
-                  row.direction == td::Direction::kBuy ? "long" : "short",
-                  pos.today_volume, pos.yd_volume, row.today_volume,
-                  row.yd_volume);
+      SPDLOG_WARN(
+          "oms: reconcile {} {} local(today={} yd={}) broker(today={} "
+          "yd={}), adopting broker",
+          row.instrument_id,
+          row.direction == td::Direction::kBuy ? "long" : "short",
+          pos.today_volume, pos.yd_volume, row.today_volume, row.yd_volume);
       pos.yd_volume = row.yd_volume;
       pos.today_volume = row.today_volume;
       if (pos.total() == 0) {
@@ -171,11 +166,9 @@ void OrderManager::ApplyTrade(td::TradeReport const& trade) {
                 side == td::Direction::kBuy ? "long" : "short", left);
   }
 
-  double const unit = side == td::Direction::kBuy
-                          ? trade.price - pos.avg_price
-                          : pos.avg_price - trade.price;
-  pos.realized_pnl +=
-      unit * trade.volume * VolumeMultiple(trade.instrument_id);
+  double const unit = side == td::Direction::kBuy ? trade.price - pos.avg_price
+                                                  : pos.avg_price - trade.price;
+  pos.realized_pnl += unit * trade.volume * VolumeMultiple(trade.instrument_id);
   if (pos.total() == 0) {
     pos.avg_price = 0;
   }

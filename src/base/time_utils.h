@@ -24,6 +24,9 @@ std::int64_t LocalDateTimeToEpochMs(std::string_view day,
                                     std::string_view time,
                                     int millisec);
 
+// Wall clock (system_clock) as Unix epoch milliseconds
+std::int64_t NowEpochMs();
+
 // Renders Unix epoch milliseconds as local "HH:MM:SS.mmm" (12 chars)
 std::string FormatLocalTimeOfDay(std::int64_t epoch_ms);
 

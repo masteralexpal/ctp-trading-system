@@ -36,7 +36,7 @@ struct OrderEntry {
 // by the exchange field, never computed from the local clock
 struct Position {
   std::string instrument_id;
-  td::Direction side;      // kBuy = long, kSell = short
+  td::Direction side;  // kBuy = long, kSell = short
   std::int32_t yd_volume{0};
   std::int32_t today_volume{0};
   double avg_price{0};     // volume-weighted open price across buckets
@@ -89,8 +89,7 @@ class OrderManager final : public td::TdClient {
   };
   struct KeyHash {
     std::size_t operator()(Key const& k) const noexcept {
-      return std::hash<std::string>{}(k.instrument_id) *
-                 31 +
+      return std::hash<std::string>{}(k.instrument_id) * 31 +
              static_cast<std::size_t>(k.side);
     }
   };

@@ -10,10 +10,11 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <chrono>
 #include <cstring>
 #include <string>
 #include <system_error>
+
+#include "base/time_utils.h"
 
 namespace cts::recorder {
 namespace {
@@ -115,10 +116,7 @@ bool RawTickFileWriter::Open(std::filesystem::path const& path,
     std::memcpy(header.magic, kRawTickFileMagic, sizeof(header.magic));
     header.version = kRawTickFileVersion;
     header.record_size = sizeof(RawTickRecord);
-    header.created_epoch_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch())
-            .count();
+    header.created_epoch_ms = base::NowEpochMs();
     std::strncpy(header.source, std::string(source).c_str(),
                  sizeof(header.source) - 1);
     if (!WriteAll(fd, &header, sizeof(header))) {

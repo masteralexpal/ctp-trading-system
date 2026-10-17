@@ -5,9 +5,10 @@
  */
 #include "recorder/raw_tick_recorder.h"
 
-#include <chrono>
 #include <cstring>
 #include <utility>
+
+#include "base/time_utils.h"
 
 #include <spdlog/spdlog.h>
 
@@ -20,12 +21,6 @@ std::string_view FixedString(char const* field, std::size_t capacity) {
   return {field, strnlen(field, capacity)};
 }
 
-std::int64_t NowEpochMs() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::system_clock::now().time_since_epoch())
-      .count();
-}
-
 }  // namespace
 
 RawTickRecorder::RawTickRecorder(std::filesystem::path dir, std::string source)
@@ -34,7 +29,7 @@ RawTickRecorder::RawTickRecorder(std::filesystem::path dir, std::string source)
 void RawTickRecorder::OnRawTick(CThostFtdcDepthMarketDataField const& tick) {
   RawTickRecord record{};
   record.seq = ++next_seq_;
-  record.arrival_ms = NowEpochMs();
+  record.arrival_ms = base::NowEpochMs();
   record.tick = tick;
   if (queue_.TryPush(record)) {
     park_.Notify();

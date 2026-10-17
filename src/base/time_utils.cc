@@ -5,6 +5,7 @@
  */
 #include "base/time_utils.h"
 
+#include <chrono>
 #include <cstdio>
 
 namespace cts::base {
@@ -28,6 +29,12 @@ int Parse2(char a, char b) {
 }
 
 }  // namespace
+
+std::int64_t NowEpochMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
 
 std::int64_t LocalDateTimeToEpochMs(std::string_view day,
                                     std::string_view time,
