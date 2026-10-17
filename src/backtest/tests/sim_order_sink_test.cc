@@ -125,6 +125,31 @@ TEST(SimOrderSinkTest, ZeroFeeByDefault) {
   EXPECT_DOUBLE_EQ(sink.total_fee(), 0.0);
 }
 
+TEST(SimOrderSinkTest, PartialFillCapsAtOppositeVolume) {
+  SimOrderSink sink;
+  RecordingClient client;
+  sink.AddClient(client);
+  sink.InsertOrder(MakeReq(td::Direction::kBuy, 3500, 5));
+
+  auto thin = MakeTick(3499, 3498);
+  thin.AskVolume1 = 2;  // only 2 lots shown at the touch price
+  sink.OnTick(thin);
+  EXPECT_EQ(sink.working_count(), 1);  // 3 lots still working
+  ASSERT_EQ(client.events.size(), 3);
+  EXPECT_EQ(client.events[1],
+            "order:000000000001:" +
+                std::to_string(static_cast<int>(td::OrderStatus::kPartTraded)));
+  EXPECT_EQ(client.events[2], "trade:000000000001:2");
+
+  sink.OnTick(MakeTick(3499, 3498));  // ask vol 5 covers the remaining 3
+  EXPECT_EQ(sink.working_count(), 0);
+  ASSERT_EQ(client.events.size(), 5);
+  EXPECT_EQ(client.events[3],
+            "order:000000000001:" +
+                std::to_string(static_cast<int>(td::OrderStatus::kAllTraded)));
+  EXPECT_EQ(client.events[4], "trade:000000000001:3");
+}
+
 TEST(SimOrderSinkTest, CancelFiresCanceledAndDropsTheOrder) {
   SimOrderSink sink;
   RecordingClient client;

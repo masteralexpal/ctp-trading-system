@@ -61,15 +61,24 @@ int SimOrderSink::CancelOrder(std::string_view order_ref) {
 
 void SimOrderSink::OnTick(CThostFtdcDepthMarketDataField const& tick) {
   for (std::size_t i = 0; i < working_.size();) {
-    Working const& w = working_[i];
+    Working& w = working_[i];
+    bool const buy = w.req.direction == td::Direction::kBuy;
     bool const touched =
-        w.req.direction == td::Direction::kBuy
-            ? tick.AskPrice1 <= w.req.limit_price && tick.AskVolume1 > 0
+        buy ? tick.AskPrice1 <= w.req.limit_price && tick.AskVolume1 > 0
             : tick.BidPrice1 >= w.req.limit_price && tick.BidVolume1 > 0;
     if (!touched) {
       ++i;
       continue;
     }
+    // Fill at most what the opposite side shows at level 1; the rest keeps
+    // working (a 500ms snapshot cannot tell how much really traded there,
+    // so this stays an optimistic cap, not queue modeling)
+    int const avail =
+        static_cast<int>(buy ? tick.AskVolume1 : tick.BidVolume1);
+    int const fill = std::min(w.req.volume - w.filled, avail);
+    w.filled += fill;
+    bool const done = w.filled == w.req.volume;
+
     td::OrderReport report{};
     std::memcpy(report.instrument_id, w.req.instrument_id,
                 sizeof(report.instrument_id));
@@ -80,10 +89,11 @@ void SimOrderSink::OnTick(CThostFtdcDepthMarketDataField const& tick) {
     report.offset = w.req.offset;
     report.limit_price = w.req.limit_price;
     report.volume_total_original = w.req.volume;
-    report.volume_traded = w.req.volume;
-    report.volume_total = 0;
-    report.status = td::OrderStatus::kAllTraded;
-    FireOrder(report);  // the CTP quirk: order terminal report comes FIRST
+    report.volume_traded = w.filled;
+    report.volume_total = w.req.volume - w.filled;
+    report.status =
+        done ? td::OrderStatus::kAllTraded : td::OrderStatus::kPartTraded;
+    FireOrder(report);  // the CTP quirk: order report comes FIRST
 
     td::TradeReport trade{};
     std::memcpy(trade.instrument_id, w.req.instrument_id,
@@ -97,10 +107,14 @@ void SimOrderSink::OnTick(CThostFtdcDepthMarketDataField const& tick) {
     trade.direction = w.req.direction;
     trade.offset = w.req.offset;
     trade.price = w.req.limit_price;
-    trade.volume = w.req.volume;
+    trade.volume = fill;
     FireTrade(trade);
 
-    working_.erase(working_.begin() + static_cast<long>(i));
+    if (done) {
+      working_.erase(working_.begin() + static_cast<long>(i));
+    } else {
+      ++i;
+    }
   }
 }
 

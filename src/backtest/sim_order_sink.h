@@ -20,8 +20,10 @@
 namespace cts::backtest {
 
 // Simulated execution: touch-fill (a buy fills when ask1 <= limit, a sell
-// when bid1 >= limit) at the limit price, full volume. Optimistic on purpose
-// for v1; queue-position realism is a later iteration.
+// when bid1 >= limit) at the limit price, per-tick fill volume capped at the
+// opposite side's level-1 volume -- partial fills included. Queue position
+// at the price level is NOT modeled (500ms snapshots lack the data to do it
+// honestly), so passive fills stay somewhat optimistic.
 //
 // Fires TdClient events to registered clients (strategy + OMS) with the CTP
 // ordering quirk preserved: the all-traded order report precedes the trade
@@ -51,6 +53,7 @@ class SimOrderSink final : public td::OrderSink {
   struct Working {
     td::OrderRequest req;
     std::string ref;
+    int filled{0};
   };
   void FireOrder(td::OrderReport const& report);
   void FireTrade(td::TradeReport const& trade);
