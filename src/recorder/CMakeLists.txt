@@ -27,6 +27,14 @@ target_link_libraries(
             third_party::spdlog
 )
 
+# ETL step 1: raw journal -> CSV (Parquet deferred; Arrow is too heavy for v1)
+add_executable(cts_dump dump_main.cc)
+
+target_link_libraries(
+    cts_dump
+    PRIVATE cts::recorder third_party::cli11 third_party::spdlog
+)
+
 if(CTS_ENABLE_UNIT_TESTS)
     add_executable(
         recorder_test raw_tick_file_test.cc raw_tick_recorder_test.cc
