@@ -11,6 +11,7 @@
 // Boundary class: only the md module's own .cc files (and its tests) may
 // include this; it exposes CTP types by design.
 
+#include <atomic>
 #include <mutex>
 #include <set>
 #include <string>
@@ -20,6 +21,7 @@
 #include "md/detail/md_api_ops.h"
 #include "md/md_delegate.h"
 #include "md/md_gateway.h"
+#include "md/raw_tick_sink.h"
 
 namespace cts::md::detail {
 
@@ -38,6 +40,12 @@ class MdSpiAdapter final : public CThostFtdcMdSpi {
   // Returns the CTP error code; 0 means accepted
   int Subscribe(std::vector<std::string> const& instruments);
   int UnSubscribe(std::vector<std::string> const& instruments);
+
+  // Raw tap for recorder-style consumers; callable from any thread, any time
+  // (nullptr detaches). Fired on the callback thread BEFORE translation
+  void SetRawTickSink(RawTickSink* sink) {
+    raw_tick_sink_.store(sink, std::memory_order_release);
+  }
 
   // CThostFtdcMdSpi
   void OnFrontConnected() override;
@@ -64,6 +72,7 @@ class MdSpiAdapter final : public CThostFtdcMdSpi {
   MdApiOps* api_;
   MdGatewayConfig config_;
   MdDelegate& delegate_;
+  std::atomic<RawTickSink*> raw_tick_sink_{nullptr};
   int request_id_{0};
   std::once_flag name_once_;
   // Guards the subscription set: touched by both the callback thread

@@ -100,10 +100,16 @@ void MdSpiAdapter::OnRspError(CThostFtdcRspInfoField* info,
 }
 
 void MdSpiAdapter::OnRtnDepthMarketData(CThostFtdcDepthMarketDataField* tick) {
-  if (tick != nullptr) {
-    // Boundary translation: the delegate never sees CTP types
-    delegate_.OnMdTick(TickFromCtp(*tick));
+  if (tick == nullptr) {
+    return;
   }
+  // Raw tap first: the verbatim wire struct, before translation -- a
+  // translator bug must never poison the archive
+  if (auto* sink = raw_tick_sink_.load(std::memory_order_acquire)) {
+    sink->OnRawTick(*tick);
+  }
+  // Boundary translation: the delegate never sees CTP types
+  delegate_.OnMdTick(TickFromCtp(*tick));
 }
 
 int MdSpiAdapter::CallSubscribe(std::vector<std::string> const& instruments,

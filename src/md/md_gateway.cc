@@ -31,6 +31,7 @@ void MdGateway::Connect(MdGatewayConfig config,
   }
   std::string front = config.front;
   spi_ = new detail::MdSpiAdapter(ops.get(), std::move(config), delegate);
+  static_cast<detail::MdSpiAdapter*>(spi_)->SetRawTickSink(raw_tick_sink_);
   api_ = ops.release();
   api_->RegisterSpi(spi_);
   api_->RegisterFront(front.data());  // CTP copies the string internally
@@ -49,6 +50,13 @@ int MdGateway::UnSubscribe(std::vector<std::string> const& instruments) {
     return -1;
   }
   return static_cast<detail::MdSpiAdapter*>(spi_)->UnSubscribe(instruments);
+}
+
+void MdGateway::SetRawTickSink(RawTickSink* sink) {
+  raw_tick_sink_ = sink;
+  if (spi_ != nullptr) {
+    static_cast<detail::MdSpiAdapter*>(spi_)->SetRawTickSink(sink);
+  }
 }
 
 void MdGateway::Disconnect() {

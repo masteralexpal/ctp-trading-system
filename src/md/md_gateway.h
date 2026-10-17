@@ -18,6 +18,8 @@ class CThostFtdcMdSpi;
 
 namespace cts::md {
 
+class RawTickSink;
+
 namespace detail {
 class MdApiOps;  // test seam; production callers never touch it
 }
@@ -51,6 +53,11 @@ class MdGateway {
   int Subscribe(std::vector<std::string> const& instruments);
   int UnSubscribe(std::vector<std::string> const& instruments);
 
+  // Attach a raw tap (recorder) that receives the verbatim wire struct before
+  // translation; callable before or after Connect (nullptr detaches). The sink
+  // must outlive the gateway
+  void SetRawTickSink(RawTickSink* sink);
+
   // Idempotent. NEVER call from the CTP callback thread (joining self =
   // deadlock)
   void Disconnect();
@@ -60,6 +67,7 @@ class MdGateway {
   // Disconnect (same pattern as spi_)
   detail::MdApiOps* api_ = nullptr;
   CThostFtdcMdSpi* spi_ = nullptr;
+  RawTickSink* raw_tick_sink_ = nullptr;  // not owned
 };
 
 }  // namespace cts::md
