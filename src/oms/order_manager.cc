@@ -87,6 +87,7 @@ void OrderManager::OnTdPositions(
       pos.avg_price = 0;
     }
   }
+  SaveLocked();
 }
 
 void OrderManager::OnTdAccount(td::AccountReport const& account) {
@@ -227,7 +228,11 @@ void OrderManager::SaveLocked() {
     return;
   }
   std::fprintf(f, "CTSOMS 1\n");
-  std::fprintf(f, "day %s\n", current_day_.c_str());
+  // Empty day (no trade seen yet) would write "day " which the strict
+  // loader rejects; omit the line instead
+  if (!current_day_.empty()) {
+    std::fprintf(f, "day %s\n", current_day_.c_str());
+  }
   if (account_) {
     std::fprintf(f, "account %.17g %.17g %.17g %.17g %.17g %.17g\n",
                  account_->balance, account_->available, account_->margin,

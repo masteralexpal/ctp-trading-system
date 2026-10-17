@@ -269,6 +269,34 @@ TEST(OrderManagerTest, SnapshotRoundTrip) {
   std::filesystem::remove(path);
 }
 
+TEST(OrderManagerTest, SnapshotWithoutTradingDayRoundTrips) {
+  auto const path = std::filesystem::temp_directory_path() /
+                    "cts_oms_snapshot_noday_test.txt";
+  std::filesystem::remove(path);
+  {
+    OrderManager oms;
+    oms.SetSnapshotPath(path);
+    // Reconcile-only state: no trade ever set the trading day
+    auto rows = std::make_shared<std::vector<td::PositionRow>>();
+    td::PositionRow row{};
+    std::strncpy(row.instrument_id, "au2612", sizeof(row.instrument_id) - 1);
+    row.direction = td::Direction::kBuy;
+    row.yd_volume = 1;
+    rows->push_back(row);
+    oms.OnTdPositions(std::move(rows));
+  }
+
+  OrderManager restored;
+  restored.SetSnapshotPath(path);
+  ASSERT_TRUE(restored.LoadSnapshot());
+  EXPECT_TRUE(restored.trading_day().empty());
+  auto const* au =
+      FindPosition(restored.positions(), "au2612", td::Direction::kBuy);
+  ASSERT_NE(au, nullptr);
+  EXPECT_EQ(au->yd_volume, 1);
+  std::filesystem::remove(path);
+}
+
 TEST(OrderManagerTest, LoadSnapshotMissingFileIsFreshStart) {
   OrderManager oms;
   oms.SetSnapshotPath(std::filesystem::temp_directory_path() /
