@@ -5,6 +5,7 @@
  */
 
 #include <chrono>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -19,6 +20,10 @@
 #include "md/console_md_client.h"
 #include "md/md_dispatcher.h"
 #include "md/md_gateway.h"
+#include "strategy/sma_cross_strategy.h"
+#include "td/console_td_client.h"
+#include "td/td_dispatcher.h"
+#include "td/td_gateway.h"
 
 #include <spdlog/async.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -60,6 +65,8 @@ void DumpConfig(cts::app::AppConfig const& cfg) {
               cfg.trader_front.empty() ? "(unset)" : cfg.trader_front);
   SPDLOG_INFO("dry-run:      {}", cfg.dry_run);
   SPDLOG_INFO("flow-dir:     {}", cfg.flow_dir);
+  SPDLOG_INFO("record-dir:   {}",
+              cfg.record_dir.empty() ? "(disabled)" : cfg.record_dir);
   for (auto const& instrument : cfg.instruments) {
     SPDLOG_INFO("instrument:   {}", instrument);
   }
@@ -77,12 +84,25 @@ bool WaitMdLogin(cts::md::MdDispatcher const& dispatcher,
   return dispatcher.logged_in();
 }
 
-// Main pipeline: connect md gateway -> subscribe -> park -> graceful stop.
+// Same shape for the td startup chain (auth + login + settlement confirm)
+bool WaitTdReady(cts::td::TdDispatcher const& dispatcher,
+                 std::chrono::seconds timeout) {
+  auto const deadline = std::chrono::steady_clock::now() + timeout;
+  while (!dispatcher.ready() && !cts::base::ShutdownRequested() &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  return dispatcher.ready();
+}
+
+// Main pipeline: md + td gateways -> instrument master -> strategy ->
+// park on the main loop -> graceful stop.
 // Shutdown: first Ctrl-C sets the shutdown flag (futex wake, no polling);
 // a second Ctrl-C _Exit()s immediately
 int RunTrading(cts::app::AppConfig const& cfg) {
   SPDLOG_INFO("ctp-trading-system v{} starting", cts::base::Version());
 
+  // --- md side ---
   cts::md::ConsoleMdClient client;
   cts::md::MdDispatcher dispatcher;
   dispatcher.AddClient(client);
@@ -90,10 +110,23 @@ int RunTrading(cts::app::AppConfig const& cfg) {
   cts::base::Thread md_dispatch_thread{"md-dispatch"};
   md_dispatch_thread.Start([&dispatcher] { dispatcher.Run(); });
 
-  // md flow dir = configured root + role subdir (trailing slash fixed by
-  // gateway)
-  std::string const md_flow_dir = cfg.flow_dir + "/md";
+  // --- td side ---
+  cts::td::ConsoleTdClient td_client;
+  cts::td::TdDispatcher td_dispatcher;
+  td_dispatcher.AddClient(td_client);
 
+  cts::base::Thread td_dispatch_thread{"td-dispatch"};
+  td_dispatch_thread.Start([&td_dispatcher] { td_dispatcher.Run(); });
+
+  // Every worker loop must be RequestStop'ed before scope exit (~Thread
+  // joins; a parked Run() would hang forever)
+  auto const stop_all = [&] {
+    td_dispatcher.RequestStop();
+    dispatcher.RequestStop();
+  };
+
+  // flow dirs = configured root + role subdir (trailing slash fixed by
+  // gateways)
   cts::md::MdGateway md_gateway;
   md_gateway.Connect(
       {
@@ -101,27 +134,91 @@ int RunTrading(cts::app::AppConfig const& cfg) {
           .broker_id = cfg.broker_id,
           .investor_id = cfg.username,
           .password = cfg.password,
-          .flow_dir = md_flow_dir,
+          .flow_dir = cfg.flow_dir + "/md",
       },
       dispatcher);
 
+  cts::td::TdGateway td_gateway;
+  td_gateway.Connect(
+      {
+          .front = cfg.trader_front,
+          .broker_id = cfg.broker_id,
+          .investor_id = cfg.username,
+          .password = cfg.password,
+          .app_id = cfg.app_id,
+          .auth_code = cfg.auth_code,
+          .flow_dir = cfg.flow_dir + "/td",
+      },
+      td_dispatcher);
+
   if (!WaitMdLogin(dispatcher, std::chrono::seconds{30})) {
     bool const aborted = cts::base::ShutdownRequested();
-    if (aborted) {
-      SPDLOG_INFO("md: shutdown requested during login wait");
-    } else {
-      SPDLOG_ERROR("md: login timeout, exiting");
-    }
-    // Must run the shutdown sequence: otherwise ~Thread() joins the spinning
-    // Run() forever
+    SPDLOG_ERROR("md: {}", aborted ? "shutdown during login wait"
+                                   : "login timeout, exiting");
+    td_gateway.Disconnect();
     md_gateway.Disconnect();
-    dispatcher.RequestStop();
-    return aborted ? 0 : 1;  // md_dispatch_thread is joined at destruction
+    stop_all();
+    return aborted ? 0 : 1;
+  }
+
+  if (!WaitTdReady(td_dispatcher, std::chrono::seconds{30})) {
+    bool const aborted = cts::base::ShutdownRequested();
+    SPDLOG_ERROR("td: {}", aborted ? "shutdown during startup chain"
+                                   : "startup chain timeout, exiting");
+    td_gateway.Disconnect();
+    md_gateway.Disconnect();
+    stop_all();
+    return aborted ? 0 : 1;
+  }
+
+  // Whole-market instrument snapshot (exchange ids for order routing)
+  td_gateway.QueryInstruments();
+  {
+    auto const deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds{60};
+    while (td_gateway.instruments() == nullptr &&
+           !cts::base::ShutdownRequested() &&
+           std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+  }
+  auto const master = td_gateway.instruments();
+  if (master == nullptr) {
+    SPDLOG_WARN("td: instrument query timed out; order routing unavailable");
+  } else {
+    SPDLOG_INFO("td: instrument master loaded, {} instruments", master->size());
   }
 
   if (!cfg.instruments.empty()) {
     if (md_gateway.Subscribe(cfg.instruments) == 0) {
       SPDLOG_INFO("md: subscribe request accepted");
+    }
+  }
+
+  // Optional demo strategy (needs the master for exchange routing)
+  std::unique_ptr<cts::strategy::SmaCrossStrategy> strategy;
+  if (!cfg.strategy_instrument.empty()) {
+    auto const* inst =
+        master != nullptr ? master->Find(cfg.strategy_instrument) : nullptr;
+    if (inst == nullptr) {
+      SPDLOG_ERROR("strategy: {} not in instrument master, disabled",
+                   cfg.strategy_instrument);
+    } else {
+      strategy = std::make_unique<cts::strategy::SmaCrossStrategy>(
+          cts::strategy::SmaCrossConfig{
+              .instrument_id = inst->instrument_id,
+              .exchange_id = inst->exchange_id,
+              .fast = cfg.strategy_fast,
+              .slow = cfg.strategy_slow,
+              .volume = cfg.strategy_volume,
+          },
+          td_gateway);
+      dispatcher.AddClient(*strategy);
+      td_dispatcher.AddClient(*strategy);
+      strategy->Start();
+      SPDLOG_INFO("strategy {} started (fast={} slow={} volume={})",
+                  strategy->name(), cfg.strategy_fast, cfg.strategy_slow,
+                  cfg.strategy_volume);
     }
   }
 
@@ -142,16 +239,21 @@ int RunTrading(cts::app::AppConfig const& cfg) {
                        std::chrono::seconds{60});
 
   // Dev console: stdin lines become tasks on this loop; no-op without a TTY
-  cts::app::Console console{loop, md_gateway, dispatcher};
+  cts::app::Console console{loop,       md_gateway, dispatcher,
+                            td_gateway, strategy.get()};
   console.Start();
 
   loop.Run();
   SPDLOG_INFO("shutdown requested, draining");
 
-  // disconnect gateway first (no new events), then request stop, then join
-  // (drains queue)
+  // Stop order flow first, then gateways (no new events), then dispatchers
+  if (strategy != nullptr) {
+    strategy->Stop();
+  }
+  td_gateway.Disconnect();
   md_gateway.Disconnect();
-  dispatcher.RequestStop();
+  stop_all();
+  td_dispatch_thread.Stop();
   md_dispatch_thread.Stop();
   return 0;
 }

@@ -18,6 +18,14 @@ class MdDispatcher;
 class MdGateway;
 }  // namespace cts::md
 
+namespace cts::td {
+class TdGateway;
+}
+
+namespace cts::strategy {
+class SmaCrossStrategy;
+}
+
 namespace cts::app {
 
 // Dev console: stdin is watched by the main TaskLoop directly (fd in the
@@ -31,7 +39,9 @@ class Console {
  public:
   Console(base::TaskLoop& loop,
           md::MdGateway& md_gateway,
-          md::MdDispatcher const& md_dispatcher);
+          md::MdDispatcher const& md_dispatcher,
+          td::TdGateway& td_gateway,
+          strategy::SmaCrossStrategy* strategy);  // nullptr = no strategy
   ~Console() = default;
 
   Console(Console const&) = delete;
@@ -47,6 +57,8 @@ class Console {
   base::TaskLoop& loop_;
   md::MdGateway& md_gateway_;
   md::MdDispatcher const& md_dispatcher_;
+  td::TdGateway& td_gateway_;
+  strategy::SmaCrossStrategy* strategy_;
   std::string pending_;  // partial line between reads
 };
 

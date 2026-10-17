@@ -25,6 +25,14 @@ struct AppConfig {
   // Root dir of CTP flow files (.con resume bookmarks);
   // filled by the CLI layer ($HOME/.cts/flow); gateways add per-role subdirs
   std::string flow_dir;
+  // Tick recording dir (one binary journal per trading day); empty = disabled
+  std::string record_dir;
+
+  // SMA-cross demo strategy; empty instrument = no strategy
+  std::string strategy_instrument;
+  int strategy_fast{5};    // fast SMA window (ticks)
+  int strategy_slow{20};   // slow SMA window (ticks)
+  int strategy_volume{1};  // lots per order
   // logging.
   std::string log_level{"info"};  // log level
 

@@ -45,6 +45,17 @@ std::unique_ptr<CLI::App> BuildApp(AppConfig& cfg) {
         home != nullptr ? std::string(home) + "/.cts/flow" : ".cts/flow";
   }
   app->add_option("--flow-dir", cfg.flow_dir, "root dir of CTP flow files");
+  app->add_option("--record-dir", cfg.record_dir,
+                  "tick recording dir (empty disables recording)");
+  app->add_option("--strategy-instrument", cfg.strategy_instrument,
+                  "run the SMA-cross demo strategy on this instrument "
+                  "(empty disables)");
+  app->add_option("--strategy-fast", cfg.strategy_fast,
+                  "strategy fast SMA window (ticks)");
+  app->add_option("--strategy-slow", cfg.strategy_slow,
+                  "strategy slow SMA window (ticks)");
+  app->add_option("--strategy-volume", cfg.strategy_volume,
+                  "strategy lots per order");
   app->add_option("--log-level", cfg.log_level, "log level")
       ->check(CLI::IsMember({"trace", "debug", "info", "warn", "error"}))
       ->capture_default_str();
