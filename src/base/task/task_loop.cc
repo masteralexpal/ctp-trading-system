@@ -39,7 +39,7 @@ void TaskLoop::PostDelayedTask(Task task, std::chrono::milliseconds delay) {
 void TaskLoop::WatchFd(int fd, Task cb) {
   {
     std::lock_guard lock(mutex_);
-    watchers_[fd] = std::make_shared<Task>(std::move(cb));
+    watchers_.emplace(fd, std::move(cb));
     epoll_event ev{};
     ev.events = EPOLLIN;
     ev.data.fd = fd;
@@ -52,7 +52,13 @@ void TaskLoop::WatchFd(int fd, Task cb) {
 
 void TaskLoop::UnwatchFd(int fd) {
   std::lock_guard lock(mutex_);
-  watchers_.erase(fd);
+  auto node = watchers_.extract(fd);
+  if (!node.empty()) {
+    // Retire, not destroy: the loop thread may be executing this very
+    // callback right now. The graveyard is cleared at a point where no
+    // callback can be running
+    graveyard_.push_back(std::move(node.mapped()));
+  }
   epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
 }
 
@@ -65,6 +71,11 @@ void TaskLoop::Run() {
   RegisterShutdownWakeEvent(&wake_event_);
   std::vector<Task> work;
   for (;;) {
+    // No callback is executing here: safe to destroy retired watchers
+    {
+      std::lock_guard lock(mutex_);
+      graveyard_.clear();
+    }
     task_queue_.TakeWork(work);
     for (auto& task : work) {
       task();
@@ -109,15 +120,17 @@ int TaskLoop::WaitForEvents(int timeout_ms) {
       wake_event_.Reset();  // consume; the queue is re-read at loop top
       continue;
     }
-    std::shared_ptr<Task> cb;
+    Task* cb = nullptr;
     {
       std::lock_guard lock(mutex_);
       auto const it = watchers_.find(fd);
       if (it != watchers_.end()) {
-        cb = it->second;
+        cb = &it->second;
       }
     }
-    if (cb && *cb) {
+    // Raw pointer, no refcount: an UnwatchFd racing or nesting here moves the
+    // task to the graveyard, keeping the pointee alive until this call ends
+    if (cb != nullptr && *cb) {
       (*cb)();
     }
   }
