@@ -24,6 +24,10 @@ target_sources(
                 # The raw tap interface stays here: MdSpiAdapter fires it.
                 # The journal format + recorder live in src/recorder.
                 raw_tick_sink.h
+                # detail/tick_ctp.h rides along: the backtest replays raw
+                # journals through the SAME translator (shared code is the
+                # point). Boundary: exposes CTP types by design.
+                detail/tick_ctp.h
                 tick.h
                 # detail/md_event.h rides along: md_dispatcher.h's queue member
                 # needs the complete type. Still internal -- do not include
