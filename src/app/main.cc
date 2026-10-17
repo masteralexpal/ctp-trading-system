@@ -5,6 +5,7 @@
  */
 
 #include <chrono>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -28,8 +29,7 @@
 #include "td/td_gateway.h"
 
 #include <spdlog/async.h>
-#include <spdlog/sinks/basic_file_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/sinks/daily_file_sink.h>
 #include <spdlog/spdlog.h>
 
 namespace {
@@ -51,9 +51,13 @@ spdlog::level::level_enum ParseLogLevel(std::string_view name) {
 }
 
 void InitLogging(cts::app::AppConfig const& cfg) {
+  // Logs go to a daily-rolled file only: the terminal belongs to the REPL.
+  // Rotation is by CALENDAR day (local clock, 00:00) -- the TradingDay-bucket
+  // rule applies to the tick journal, not to diagnostics
+  std::filesystem::create_directories(cfg.log_dir);
   spdlog::init_thread_pool(8192, 1);
-  auto logger =
-      spdlog::create_async_nb<spdlog::sinks::stdout_color_sink_mt>("cts");
+  auto logger = spdlog::create_async_nb<spdlog::sinks::daily_file_sink_mt>(
+      "cts", cfg.log_dir + "/cts.log", 0, 0);
   spdlog::set_default_logger(std::move(logger));
   spdlog::set_level(ParseLogLevel(cfg.log_level));
   spdlog::flush_on(spdlog::level::err);

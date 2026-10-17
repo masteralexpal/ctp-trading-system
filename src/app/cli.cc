@@ -57,6 +57,12 @@ std::unique_ptr<CLI::App> BuildApp(AppConfig& cfg) {
   app->add_option("--log-level", cfg.log_level, "log level")
       ->check(CLI::IsMember({"trace", "debug", "info", "warn", "error"}))
       ->capture_default_str();
+  if (cfg.log_dir.empty()) {
+    cfg.log_dir =
+        home != nullptr ? std::string(home) + "/.cts/logs" : ".cts/logs";
+  }
+  app->add_option("--log-dir", cfg.log_dir,
+                  "log dir; one daily-rolled file per calendar day");
   app->add_option("--md-front", cfg.md_front, "market data front address")
       ->check(kTcpFront);
   app->add_option("--trader-front", cfg.trader_front, "trader front address")

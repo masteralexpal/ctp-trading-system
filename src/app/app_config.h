@@ -33,6 +33,9 @@ struct AppConfig {
   int strategy_volume{1};  // lots per order
   // logging.
   std::string log_level{"info"};  // log level
+  // Daily-rolled log dir; filled by the CLI layer ($HOME/.cts/logs).
+  // One file per calendar day: cts_YYYY-MM-DD.log
+  std::string log_dir;
 
   // instruments
   std::vector<std::string> instruments;
