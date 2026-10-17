@@ -54,6 +54,14 @@ class TdApiOps {
   // Account snapshot; answered once via OnRspQryTradingAccount
   virtual int ReqQryTradingAccount(CThostFtdcQryTradingAccountField* req,
                                    int request_id) = 0;
+  // Per-instrument margin/commission (on demand; whole-market is infeasible
+  // under the 1 query/sec throttle)
+  virtual int ReqQryInstrumentMarginRate(
+      CThostFtdcQryInstrumentMarginRateField* req,
+      int request_id) = 0;
+  virtual int ReqQryInstrumentCommissionRate(
+      CThostFtdcQryInstrumentCommissionRateField* req,
+      int request_id) = 0;
 };
 
 // Production impl: owns the real CThostFtdcTraderApi.
@@ -105,6 +113,15 @@ class CtpTdApiOps final : public TdApiOps {
   int ReqQryTradingAccount(CThostFtdcQryTradingAccountField* req,
                            int request_id) override {
     return api_->ReqQryTradingAccount(req, request_id);
+  }
+  int ReqQryInstrumentMarginRate(CThostFtdcQryInstrumentMarginRateField* req,
+                                 int request_id) override {
+    return api_->ReqQryInstrumentMarginRate(req, request_id);
+  }
+  int ReqQryInstrumentCommissionRate(
+      CThostFtdcQryInstrumentCommissionRateField* req,
+      int request_id) override {
+    return api_->ReqQryInstrumentCommissionRate(req, request_id);
   }
 
  private:

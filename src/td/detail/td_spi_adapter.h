@@ -21,6 +21,7 @@
 #include "ThostFtdcTraderApi.h"
 #include "instrument/instrument_master.h"
 #include "td/detail/td_api_ops.h"
+#include "td/rate_table.h"
 #include "td/td_delegate.h"
 #include "td/td_gateway.h"
 
@@ -41,7 +42,11 @@ namespace cts::td::detail {
 // exact type TdSpiAdapter (see TdGateway::Disconnect).
 class TdSpiAdapter final : public CThostFtdcTraderSpi {
  public:
-  TdSpiAdapter(TdApiOps* api, TdGatewayConfig config, TdDelegate& delegate);
+  // rates: gateway-owned sink for margin/commission answers
+  TdSpiAdapter(TdApiOps* api,
+               TdGatewayConfig config,
+               TdDelegate& delegate,
+               RateTable& rates);
 
   // Any thread. Returns the allocated order_ref, or empty when rejected
   // locally (not ready / CTP refused the request)
@@ -55,6 +60,10 @@ class TdSpiAdapter final : public CThostFtdcTraderSpi {
   int QueryPositions();
   // Any thread; the answer arrives once as OnTdAccount (same throttle)
   int QueryAccount();
+  // Any thread; answers land in the RateTable (same throttle). One
+  // instrument per call -- whole-market is infeasible
+  int QueryMarginRate(std::string_view instrument_id);
+  int QueryCommissionRate(std::string_view instrument_id);
 
   bool ready() const { return ready_.load(std::memory_order_acquire); }
   // Latest built snapshot; nullptr until the first query completes.
@@ -101,6 +110,16 @@ class TdSpiAdapter final : public CThostFtdcTraderSpi {
                               CThostFtdcRspInfoField* info,
                               int request_id,
                               bool is_last) override;
+  void OnRspQryInstrumentMarginRate(
+      CThostFtdcInstrumentMarginRateField* rate,
+      CThostFtdcRspInfoField* info,
+      int request_id,
+      bool is_last) override;
+  void OnRspQryInstrumentCommissionRate(
+      CThostFtdcInstrumentCommissionRateField* rate,
+      CThostFtdcRspInfoField* info,
+      int request_id,
+      bool is_last) override;
   void OnRtnOrder(CThostFtdcOrderField* order) override;
   void OnRtnTrade(CThostFtdcTradeField* trade) override;
   void OnErrRtnOrderInsert(CThostFtdcInputOrderField* req,
@@ -126,6 +145,7 @@ class TdSpiAdapter final : public CThostFtdcTraderSpi {
   TdApiOps* api_;
   TdGatewayConfig config_;
   TdDelegate& delegate_;
+  RateTable& rates_;
   std::once_flag name_once_;
 
   std::atomic<bool> ready_{false};

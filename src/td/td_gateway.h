@@ -15,6 +15,7 @@
 #include "instrument/instrument_master.h"
 #include "td/order.h"
 #include "td/order_sink.h"
+#include "td/rate_table.h"
 #include "td/td_delegate.h"
 
 class CThostFtdcTraderSpi;
@@ -69,6 +70,13 @@ class TdGateway : public OrderSink {
   // Any thread. The answer arrives once as TdDelegate::OnTdAccount
   int QueryAccount();
 
+  // Any thread. Per-instrument margin/commission; answers land in rates()
+  // (same throttle; one instrument per call)
+  int QueryMarginRate(std::string_view instrument_id);
+  int QueryCommissionRate(std::string_view instrument_id);
+  // On-demand rate table; filled by the two queries above
+  RateTable const& rates() const { return rates_; }
+
   // Startup chain finished (auth + login + settlement confirm)
   bool ready() const;
 
@@ -81,6 +89,7 @@ class TdGateway : public OrderSink {
   // Disconnect (same pattern as spi_)
   detail::TdApiOps* api_ = nullptr;
   CThostFtdcTraderSpi* spi_ = nullptr;
+  RateTable rates_;  // adapter writes, risk sink reads
 };
 
 }  // namespace cts::td

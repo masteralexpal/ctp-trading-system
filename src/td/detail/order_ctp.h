@@ -36,6 +36,11 @@ bool PositionRowFromCtp(CThostFtdcInvestorPositionField const& f,
                         PositionRow& row);
 AccountReport AccountReportFromCtp(CThostFtdcTradingAccountField const& f);
 
+// 6.7.x moved InstrumentID to reserve1 in these two structs
+MarginRate MarginRateFromCtp(CThostFtdcInstrumentMarginRateField const& f);
+CommissionRate CommissionRateFromCtp(
+    CThostFtdcInstrumentCommissionRateField const& f);
+
 }  // namespace cts::td::detail
 
 #endif  // CTS_TD_DETAIL_ORDER_CTP_H_

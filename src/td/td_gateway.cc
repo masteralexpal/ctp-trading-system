@@ -30,7 +30,8 @@ void TdGateway::Connect(TdGatewayConfig config,
     return;
   }
   std::string front = config.front;
-  spi_ = new detail::TdSpiAdapter(ops.get(), std::move(config), delegate);
+  spi_ = new detail::TdSpiAdapter(ops.get(), std::move(config), delegate,
+                                  rates_);
   api_ = ops.release();
   api_->RegisterSpi(spi_);
   // QUICK resume: private/public streams restart empty after reconnect
@@ -75,6 +76,22 @@ int TdGateway::QueryAccount() {
     return -1;
   }
   return static_cast<detail::TdSpiAdapter*>(spi_)->QueryAccount();
+}
+
+int TdGateway::QueryMarginRate(std::string_view instrument_id) {
+  if (api_ == nullptr) {
+    return -1;
+  }
+  return static_cast<detail::TdSpiAdapter*>(spi_)->QueryMarginRate(
+      instrument_id);
+}
+
+int TdGateway::QueryCommissionRate(std::string_view instrument_id) {
+  if (api_ == nullptr) {
+    return -1;
+  }
+  return static_cast<detail::TdSpiAdapter*>(spi_)->QueryCommissionRate(
+      instrument_id);
 }
 
 std::shared_ptr<instrument::InstrumentMaster const> TdGateway::instruments()

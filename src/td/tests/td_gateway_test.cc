@@ -90,6 +90,22 @@ class FakeTdApiOps final : public detail::TdApiOps {
     ++qry_account_calls;
     return 0;
   }
+  int ReqQryInstrumentMarginRate(
+      CThostFtdcQryInstrumentMarginRateField* req, int /*id*/) override {
+    ++qry_margin_calls;
+    qry_margin_req = *req;
+    return 0;
+  }
+  int ReqQryInstrumentCommissionRate(
+      CThostFtdcQryInstrumentCommissionRateField* req, int /*id*/) override {
+    ++qry_commission_calls;
+    qry_commission_req = *req;
+    return 0;
+  }
+  int qry_margin_calls = 0;
+  int qry_commission_calls = 0;
+  CThostFtdcQryInstrumentMarginRateField qry_margin_req{};
+  CThostFtdcQryInstrumentCommissionRateField qry_commission_req{};
 };
 
 struct RecordingDelegate : TdDelegate {
@@ -438,6 +454,44 @@ TEST_F(TdGatewayTest, QueryPositionsRejectedBeforeReady) {
   Connect();
   EXPECT_EQ(gateway.QueryPositions(), -1);
   EXPECT_EQ(fake->qry_position_calls, 0);
+}
+
+TEST_F(TdGatewayTest, MarginRateLandsInRateTable) {
+  Connect();
+  ReadyUp();
+  EXPECT_EQ(gateway.QueryMarginRate("rb2701"), 0);
+  EXPECT_EQ(fake->qry_margin_calls, 1);
+  EXPECT_STREQ(fake->qry_margin_req.reserve1, "rb2701");
+
+  CThostFtdcInstrumentMarginRateField rate{};
+  std::strcpy(rate.reserve1, "rb2701");
+  rate.LongMarginRatioByMoney = 0.12;
+  rate.ShortMarginRatioByMoney = 0.14;
+  fake->spi->OnRspQryInstrumentMarginRate(&rate, nullptr, 1, true);
+
+  auto const m = gateway.rates().FindMargin("rb2701");
+  ASSERT_TRUE(m.has_value());
+  EXPECT_DOUBLE_EQ(m->long_ratio, 0.12);
+  EXPECT_DOUBLE_EQ(m->short_ratio, 0.14);
+  EXPECT_STREQ(m->instrument_id, "rb2701");
+}
+
+TEST_F(TdGatewayTest, CommissionRateLandsInRateTable) {
+  Connect();
+  ReadyUp();
+  EXPECT_EQ(gateway.QueryCommissionRate("rb2701"), 0);
+  EXPECT_EQ(fake->qry_commission_calls, 1);
+
+  CThostFtdcInstrumentCommissionRateField rate{};
+  std::strcpy(rate.reserve1, "rb2701");
+  rate.OpenRatioByMoney = 0.0001;
+  rate.CloseTodayRatioByVolume = 3.0;
+  fake->spi->OnRspQryInstrumentCommissionRate(&rate, nullptr, 1, true);
+
+  auto const c = gateway.rates().FindCommission("rb2701");
+  ASSERT_TRUE(c.has_value());
+  EXPECT_DOUBLE_EQ(c->open_by_money, 0.0001);
+  EXPECT_DOUBLE_EQ(c->close_today_by_volume, 3.0);
 }
 
 }  // namespace

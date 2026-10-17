@@ -20,8 +20,12 @@ namespace cts::td::detail {
 
 TdSpiAdapter::TdSpiAdapter(TdApiOps* api,
                            TdGatewayConfig config,
-                           TdDelegate& delegate)
-    : api_(api), config_(std::move(config)), delegate_(delegate) {}
+                           TdDelegate& delegate,
+                           RateTable& rates)
+    : api_(api),
+      config_(std::move(config)),
+      delegate_(delegate),
+      rates_(rates) {}
 
 std::string TdSpiAdapter::NextOrderRef() {
   char buf[13];
@@ -224,6 +228,58 @@ int TdSpiAdapter::QueryAccount() {
   base::CopyToFixedArray(req.BrokerID, config_.broker_id);
   base::CopyToFixedArray(req.InvestorID, config_.investor_id);
   return api_->ReqQryTradingAccount(&req, request_id_.fetch_add(1) + 1);
+}
+
+int TdSpiAdapter::QueryMarginRate(std::string_view instrument_id) {
+  if (!ready_.load(std::memory_order_acquire)) {
+    return -1;
+  }
+  CThostFtdcQryInstrumentMarginRateField req{};
+  base::CopyToFixedArray(req.BrokerID, config_.broker_id);
+  base::CopyToFixedArray(req.InvestorID, config_.investor_id);
+  base::CopyToFixedArray(req.reserve1, instrument_id);  // 6.7.x instrument id
+  req.HedgeFlag = THOST_FTDC_HF_Speculation;
+  return api_->ReqQryInstrumentMarginRate(&req, request_id_.fetch_add(1) + 1);
+}
+
+int TdSpiAdapter::QueryCommissionRate(std::string_view instrument_id) {
+  if (!ready_.load(std::memory_order_acquire)) {
+    return -1;
+  }
+  CThostFtdcQryInstrumentCommissionRateField req{};
+  base::CopyToFixedArray(req.BrokerID, config_.broker_id);
+  base::CopyToFixedArray(req.InvestorID, config_.investor_id);
+  base::CopyToFixedArray(req.reserve1, instrument_id);
+  return api_->ReqQryInstrumentCommissionRate(&req,
+                                              request_id_.fetch_add(1) + 1);
+}
+
+void TdSpiAdapter::OnRspQryInstrumentMarginRate(
+    CThostFtdcInstrumentMarginRateField* rate,
+    CThostFtdcRspInfoField* info,
+    int /*request_id*/,
+    bool /*is_last*/) {
+  if (info != nullptr && info->ErrorID != 0) {
+    delegate_.OnTdError(info->ErrorID, base::GbkToUtf8(info->ErrorMsg));
+    return;
+  }
+  if (rate != nullptr) {
+    rates_.Update(MarginRateFromCtp(*rate));
+  }
+}
+
+void TdSpiAdapter::OnRspQryInstrumentCommissionRate(
+    CThostFtdcInstrumentCommissionRateField* rate,
+    CThostFtdcRspInfoField* info,
+    int /*request_id*/,
+    bool /*is_last*/) {
+  if (info != nullptr && info->ErrorID != 0) {
+    delegate_.OnTdError(info->ErrorID, base::GbkToUtf8(info->ErrorMsg));
+    return;
+  }
+  if (rate != nullptr) {
+    rates_.Update(CommissionRateFromCtp(*rate));
+  }
 }
 
 void TdSpiAdapter::OnRspQryTradingAccount(CThostFtdcTradingAccountField* account,

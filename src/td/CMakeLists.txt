@@ -19,6 +19,7 @@ target_sources(
                 console_td_client.h
                 order.h
                 order_sink.h
+                rate_table.h
                 td_client.h
                 td_delegate.h
                 td_dispatcher.h

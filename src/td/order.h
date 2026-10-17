@@ -104,11 +104,33 @@ struct AccountReport {
   double position_profit; // 持仓盈亏
 };
 
+// Per-investor margin ratios, normalized from OnRspQryInstrumentMarginRate.
+// Queried per instrument on demand (a whole-market pull would take hours at
+// the 1 query/sec throttle)
+struct MarginRate {
+  char instrument_id[31];
+  double long_ratio;   // 多头保证金率 (by money)
+  double short_ratio;  // 空头保证金率 (by money)
+};
+
+// Per-investor commission, normalized from OnRspQryInstrumentCommissionRate
+struct CommissionRate {
+  char instrument_id[31];
+  double open_by_money;        // 开仓手续费率
+  double open_by_volume;       // 开仓手续费 (per lot)
+  double close_by_money;       // 平仓手续费率
+  double close_by_volume;      // 平仓手续费
+  double close_today_by_money; // 平今手续费率
+  double close_today_by_volume;// 平今手续费
+};
+
 static_assert(std::is_trivially_copyable_v<OrderRequest>);
 static_assert(std::is_trivially_copyable_v<OrderReport>);
 static_assert(std::is_trivially_copyable_v<TradeReport>);
 static_assert(std::is_trivially_copyable_v<PositionRow>);
 static_assert(std::is_trivially_copyable_v<AccountReport>);
+static_assert(std::is_trivially_copyable_v<MarginRate>);
+static_assert(std::is_trivially_copyable_v<CommissionRate>);
 
 }  // namespace cts::td
 
