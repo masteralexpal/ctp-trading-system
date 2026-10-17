@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "recorder/raw_tick_file.h"
+#include "td/order.h"
 #include "td/order_sink.h"
 #include "td/td_client.h"
 
@@ -39,6 +40,11 @@ class SimOrderSink final : public td::OrderSink {
   // born of the tick must not fill on it
   void OnTick(CThostFtdcDepthMarketDataField const& tick);
 
+  // Fee model: reuses the live td::CommissionRate shape (by-money ratios on
+  // the notional, by-volume flat per lot); zero rates = no fees
+  void SetFee(td::CommissionRate rate, int volume_multiple);
+  double total_fee() const { return total_fee_; }
+
   std::size_t working_count() const { return working_.size(); }
 
  private:
@@ -52,6 +58,9 @@ class SimOrderSink final : public td::OrderSink {
   std::vector<td::TdClient*> clients_;
   std::vector<Working> working_;
   int next_ref_{1};
+  td::CommissionRate fee_{};
+  int volume_multiple_{1};
+  double total_fee_{0};
 };
 
 }  // namespace cts::backtest

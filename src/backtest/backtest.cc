@@ -12,8 +12,11 @@
 namespace cts::backtest {
 
 BacktestResult RunBacktest(std::filesystem::path const& file,
-                           strategy::SmaCrossConfig const& config) {
+                           strategy::SmaCrossConfig const& config,
+                           td::CommissionRate const& fee,
+                           int volume_multiple) {
   SimOrderSink sink;
+  sink.SetFee(fee, volume_multiple);
   oms::OrderManager ledger;
   strategy::SmaCrossStrategy strategy{config, sink};
   sink.AddClient(strategy);
@@ -37,6 +40,7 @@ BacktestResult RunBacktest(std::filesystem::path const& file,
   for (auto const& p : result.positions) {
     result.realized_pnl += p.realized_pnl;
   }
+  result.total_fee = sink.total_fee();
   return result;
 }
 

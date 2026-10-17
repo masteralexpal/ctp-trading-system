@@ -110,7 +110,27 @@ void SimOrderSink::FireOrder(td::OrderReport const& report) {
   }
 }
 
+void SimOrderSink::SetFee(td::CommissionRate rate, int volume_multiple) {
+  fee_ = rate;
+  volume_multiple_ = volume_multiple > 0 ? volume_multiple : 1;
+}
+
 void SimOrderSink::FireTrade(td::TradeReport const& trade) {
+  // Fee by offset class: open / close-today / close
+  double by_money;
+  double by_volume;
+  if (trade.offset == td::Offset::kOpen) {
+    by_money = fee_.open_by_money;
+    by_volume = fee_.open_by_volume;
+  } else if (trade.offset == td::Offset::kCloseToday) {
+    by_money = fee_.close_today_by_money;
+    by_volume = fee_.close_today_by_volume;
+  } else {
+    by_money = fee_.close_by_money;
+    by_volume = fee_.close_by_volume;
+  }
+  total_fee_ += trade.price * trade.volume * volume_multiple_ * by_money +
+                trade.volume * by_volume;
   for (auto* client : clients_) {
     client->OnTdTrade(trade);
   }

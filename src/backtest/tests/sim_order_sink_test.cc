@@ -99,6 +99,32 @@ TEST(SimOrderSinkTest, SellFillsWhenBidTouchesLimit) {
   EXPECT_EQ(sink.working_count(), 0);
 }
 
+TEST(SimOrderSinkTest, FeesChargedPerOffsetClass) {
+  SimOrderSink sink;
+  td::CommissionRate fee{};
+  fee.open_by_money = 0.0001;
+  fee.close_today_by_money = 0.0003;  // the SHFE-style close-today surcharge
+  sink.SetFee(fee, 10);               // rb: 10 tons per lot
+
+  sink.InsertOrder(MakeReq(td::Direction::kBuy, 3500));
+  sink.OnTick(MakeTick(3499, 3498));  // fills @3500
+  EXPECT_DOUBLE_EQ(sink.total_fee(), 3500 * 10 * 0.0001);
+
+  auto close = MakeReq(td::Direction::kSell, 3600);
+  close.offset = td::Offset::kCloseToday;
+  sink.InsertOrder(close);
+  sink.OnTick(MakeTick(3601, 3600));  // fills @3600
+  EXPECT_DOUBLE_EQ(sink.total_fee(),
+                   3500 * 10 * 0.0001 + 3600 * 10 * 0.0003);
+}
+
+TEST(SimOrderSinkTest, ZeroFeeByDefault) {
+  SimOrderSink sink;
+  sink.InsertOrder(MakeReq(td::Direction::kBuy, 3500));
+  sink.OnTick(MakeTick(3499, 3498));
+  EXPECT_DOUBLE_EQ(sink.total_fee(), 0.0);
+}
+
 TEST(SimOrderSinkTest, CancelFiresCanceledAndDropsTheOrder) {
   SimOrderSink sink;
   RecordingClient client;
