@@ -41,6 +41,8 @@ void SmaCrossStrategy::OnTick(md::Tick const& tick) {
 
   // Decide under the lock; emit outside it (the sink may call back fast)
   bool submit = false;
+  bool cancel = false;
+  std::string cancel_ref;
   td::OrderRequest req{};
   {
     std::lock_guard lock(mutex_);
@@ -56,37 +58,70 @@ void SmaCrossStrategy::OnTick(md::Tick const& tick) {
     int const sign =
         fast_sma_ > slow_sma_ ? 1 : (fast_sma_ < slow_sma_ ? -1 : 0);
 
-    if (sign != 0 && sign != prev_sign_ && !order_in_flight_) {
-      bool const want_long = sign > 0;
-      bool const flat_or_short = position_ <= 0;
-      bool const flat_or_long = position_ >= 0;
-      if ((want_long && flat_or_short) || (!want_long && flat_or_long)) {
-        bool const closing = position_ != 0;
-        req.direction = want_long ? td::Direction::kBuy : td::Direction::kSell;
-        if (!closing) {
-          req.offset = td::Offset::kOpen;
-        } else {
-          req.offset = NeedsCloseToday(config_.exchange_id)
-                           ? td::Offset::kCloseToday
-                           : td::Offset::kClose;
+    if (order_in_flight_) {
+      // Working order: cancel once on reversal or timeout; prev_sign_ stays
+      // stale so the intent re-fires the tick after the flight ends
+      if (!cancel_sent_ && sign != 0) {
+        bool const reversed =
+            (sign > 0 && working_dir_ == td::Direction::kSell) ||
+            (sign < 0 && working_dir_ == td::Direction::kBuy);
+        auto const age = std::chrono::steady_clock::now() - submitted_at_;
+        bool const stale =
+            age >= std::chrono::milliseconds{config_.order_timeout_ms};
+        if (reversed || stale) {
+          cancel = true;
+          cancel_ref = working_ref_;
+          cancel_sent_ = true;
+          // Re-arm the edge detector: the intent (chase or reversal) must
+          // re-fire on the first tick after the flight ends, even when the
+          // sign never changed
+          prev_sign_ = 0;
+          SPDLOG_INFO("strategy {}: cancel {} ({})", name(), working_ref_,
+                      reversed ? "signal reversed" : "order timed out");
         }
-        // Aggressive limit: cross the book, stay a limit order
-        req.limit_price = want_long ? tick.ask_price[0] : tick.bid_price[0];
-        req.volume = config_.volume;
-        base::CopyToFixedArray(req.instrument_id, config_.instrument_id);
-        base::CopyToFixedArray(req.exchange_id, config_.exchange_id);
-        submit = req.limit_price > 0.0;
       }
+    } else {
+      if (sign != 0 && sign != prev_sign_) {
+        bool const want_long = sign > 0;
+        bool const flat_or_short = position_ <= 0;
+        bool const flat_or_long = position_ >= 0;
+        if ((want_long && flat_or_short) || (!want_long && flat_or_long)) {
+          bool const closing = position_ != 0;
+          req.direction =
+              want_long ? td::Direction::kBuy : td::Direction::kSell;
+          if (!closing) {
+            req.offset = td::Offset::kOpen;
+          } else {
+            // The risk sink re-splits this guess against the ledger buckets
+            req.offset = NeedsCloseToday(config_.exchange_id)
+                             ? td::Offset::kCloseToday
+                             : td::Offset::kClose;
+          }
+          // Aggressive limit: cross the book, stay a limit order
+          req.limit_price = want_long ? tick.ask_price[0] : tick.bid_price[0];
+          req.volume = config_.volume;
+          base::CopyToFixedArray(req.instrument_id, config_.instrument_id);
+          base::CopyToFixedArray(req.exchange_id, config_.exchange_id);
+          submit = req.limit_price > 0.0;
+        }
+      }
+      prev_sign_ = sign;
     }
-    prev_sign_ = sign;
   }
 
+  if (cancel) {
+    order_sink_.CancelOrder(cancel_ref);
+    return;
+  }
   if (submit) {
     std::string const ref = order_sink_.InsertOrder(req);
     std::lock_guard lock(mutex_);
     if (!ref.empty()) {
       order_in_flight_ = true;
       working_ref_ = ref;
+      working_dir_ = req.direction;
+      submitted_at_ = std::chrono::steady_clock::now();
+      cancel_sent_ = false;
       own_refs_.insert(ref);
       SPDLOG_INFO("strategy {}: {} {} {} @{} ref={}", name(),
                   req.direction == td::Direction::kBuy ? "buy" : "sell",
@@ -104,6 +139,7 @@ void SmaCrossStrategy::OnTdOrder(td::OrderReport const& order) {
       order.status == td::OrderStatus::kCanceled ||
       order.status == td::OrderStatus::kRejected) {
     order_in_flight_ = false;
+    cancel_sent_ = false;
     if (order.status == td::OrderStatus::kRejected) {
       SPDLOG_WARN("strategy {}: order {} rejected", name(), working_ref_);
     }
