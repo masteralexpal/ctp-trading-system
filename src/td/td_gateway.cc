@@ -34,8 +34,10 @@ void TdGateway::Connect(TdGatewayConfig config,
   api_ = ops.release();
   api_->RegisterSpi(spi_);
   // QUICK resume: private/public streams restart empty after reconnect
-  api_->SubscribePrivateTopic(2);  // THOST_TERT_QUICK
-  api_->SubscribePublicTopic(2);
+  api_->SubscribePrivateTopic(1);  // THOST_TERT_RESUME: after a reconnect the
+  api_->SubscribePublicTopic(1);   // broker resends the private/public flow
+                                   // from the .con bookmark -- reports during
+                                   // the outage are not lost
   api_->RegisterFront(front.data());  // CTP copies the string internally
   api_->Init();
 }

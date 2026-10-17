@@ -109,12 +109,15 @@ class TdSpiAdapter final : public CThostFtdcTraderSpi {
                            CThostFtdcRspInfoField* info) override;
 
  private:
-  // Cancel key of a live order, captured at insert and refreshed by reports
+  // Cancel key of a live order, captured at insert and refreshed by reports.
+  // order_sys_id is the reconnect-proof half: front/session die with the
+  // session, the exchange-side sys id does not
   struct OrderContext {
     int front_id;
     int session_id;
     char exchange_id[9];
     char instrument_id[31];
+    char order_sys_id[21];
   };
 
   std::string NextOrderRef();  // zero-padded 12-digit, monotonic

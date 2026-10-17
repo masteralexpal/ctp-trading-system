@@ -75,8 +75,14 @@ int TdSpiAdapter::CancelOrder(std::string_view order_ref) {
   base::CopyToFixedArray(f.OrderRef, std::string(order_ref));
   base::CopyToFixedArray(f.ExchangeID, ctx.exchange_id);
   base::CopyToFixedArray(f.InstrumentID, ctx.instrument_id);
-  f.FrontID = ctx.front_id;
-  f.SessionID = ctx.session_id;
+  if (ctx.order_sys_id[0] != '\0') {
+    // Reconnect-proof key: identify by exchange-side sys id; front/session
+    // of the OLD session would be rejected after a reconnect
+    base::CopyToFixedArray(f.OrderSysID, ctx.order_sys_id);
+  } else {
+    f.FrontID = ctx.front_id;
+    f.SessionID = ctx.session_id;
+  }
   f.OrderActionRef = next_action_ref_.fetch_add(1, std::memory_order_relaxed);
   f.ActionFlag = THOST_FTDC_AF_Delete;
   return api_->ReqOrderAction(&f, request_id_.fetch_add(1) + 1);
@@ -301,9 +307,13 @@ void TdSpiAdapter::OnRtnOrder(CThostFtdcOrderField* order) {
       orders_.erase(report.order_ref);  // terminal: no longer cancellable
     } else if (auto const it = orders_.find(report.order_ref);
                it != orders_.end()) {
-      // Refresh the cancel key with the authoritative front/session
+      // Refresh the cancel key: authoritative front/session, plus the
+      // exchange-side sys id (the reconnect-proof half)
       it->second.front_id = report.front_id;
       it->second.session_id = report.session_id;
+      if (report.order_sys_id[0] != '\0') {
+        base::CopyToFixedArray(it->second.order_sys_id, report.order_sys_id);
+      }
     }
   }
   delegate_.OnTdOrder(report);

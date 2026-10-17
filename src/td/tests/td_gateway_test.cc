@@ -184,8 +184,8 @@ TEST_F(TdGatewayTest, ConnectDrivesApiInOrder) {
   EXPECT_EQ(calls,
             (std::vector<std::string>{"RegisterSpi", "RegisterFront", "Init"}));
   EXPECT_EQ(fake->front, "tcp://example:12346");
-  EXPECT_EQ(fake->private_topic, 2);  // THOST_TERT_QUICK
-  EXPECT_EQ(fake->public_topic, 2);
+  EXPECT_EQ(fake->private_topic, 1);  // THOST_TERT_RESUME
+  EXPECT_EQ(fake->public_topic, 1);
 }
 
 TEST_F(TdGatewayTest, StartupChainRunsToReady) {
@@ -298,6 +298,28 @@ TEST_F(TdGatewayTest, CancelOrderUsesTheStoredKey) {
   EXPECT_EQ(f.SessionID, 100);
   EXPECT_EQ(f.ActionFlag, THOST_FTDC_AF_Delete);
   EXPECT_STREQ(f.InstrumentID, "rb2701");
+}
+
+TEST_F(TdGatewayTest, CancelOrderPrefersOrderSysIdWhenKnown) {
+  Connect();
+  ReadyUp();
+  std::string const ref = gateway.InsertOrder(MakeRequest());
+  CThostFtdcOrderField report{};
+  std::strcpy(report.OrderRef, ref.c_str());
+  std::strcpy(report.InstrumentID, "rb2701");
+  std::strcpy(report.OrderSysID, "12345");
+  report.OrderStatus = THOST_FTDC_OST_NoTradeQueueing;
+  report.FrontID = 8;
+  report.SessionID = 100;
+  fake->spi->OnRtnOrder(&report);
+
+  EXPECT_EQ(gateway.CancelOrder(ref), 0);
+  ASSERT_EQ(fake->action_reqs.size(), 1u);
+  auto const& f = fake->action_reqs[0];
+  // The exchange-side sys id survives a reconnect; front/session do not
+  EXPECT_STREQ(f.OrderSysID, "12345");
+  EXPECT_EQ(f.FrontID, 0);
+  EXPECT_EQ(f.SessionID, 0);
 }
 
 TEST_F(TdGatewayTest, TerminalOrdersAreNotCancellable) {

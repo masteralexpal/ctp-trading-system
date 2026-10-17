@@ -26,8 +26,8 @@ class TdApiOps {
 
   virtual void RegisterSpi(CThostFtdcTraderSpi* spi) = 0;
   virtual void RegisterFront(char* front) = 0;
-  // Topic subscription must precede RegisterFront; THOST_TERT_QUICK = no
-  // resume of private/public streams after reconnect
+  // Topic subscription must precede RegisterFront; THOST_TERT_RESUME replays
+  // the private/public streams from the .con bookmark after a reconnect
   virtual void SubscribePrivateTopic(int resume_type) = 0;
   virtual void SubscribePublicTopic(int resume_type) = 0;
   virtual void Init() = 0;
