@@ -90,6 +90,14 @@ class FakeTdApiOps final : public detail::TdApiOps {
     ++qry_account_calls;
     return 0;
   }
+  int ReqQryOrder(CThostFtdcQryOrderField* req, int /*id*/) override {
+    ++qry_order_calls;
+    qry_order_req = *req;
+    return qry_order_rc;
+  }
+  int qry_order_calls = 0;
+  int qry_order_rc = 0;  // tests can make the send fail
+  CThostFtdcQryOrderField qry_order_req{};
   int ReqQryInstrumentMarginRate(
       CThostFtdcQryInstrumentMarginRateField* req, int /*id*/) override {
     ++qry_margin_calls;
@@ -170,8 +178,11 @@ struct TdGatewayTest : testing::Test {
         delegate, std::move(ops));
   }
 
-  // Drives the full startup chain to ready (auth -> login -> confirm)
-  void ReadyUp(int max_order_ref = 0) {
+  // Drives the full startup chain to ready (auth -> login -> confirm ->
+  // order query). alive_orders, when given, are delivered as the query
+  // answer before the closing is_last
+  void ReadyUp(int max_order_ref = 0,
+               std::vector<CThostFtdcOrderField> const& alive_orders = {}) {
     fake->spi->OnFrontConnected();
     fake->spi->OnRspAuthenticate(nullptr, nullptr, 1, true);
     CThostFtdcRspUserLoginField rsp{};
@@ -181,6 +192,11 @@ struct TdGatewayTest : testing::Test {
                   max_order_ref);
     fake->spi->OnRspUserLogin(&rsp, nullptr, 2, true);
     fake->spi->OnRspSettlementInfoConfirm(nullptr, nullptr, 3, true);
+    for (auto const& o : alive_orders) {
+      CThostFtdcOrderField copy = o;
+      fake->spi->OnRspQryOrder(&copy, nullptr, 4, false);
+    }
+    fake->spi->OnRspQryOrder(nullptr, nullptr, 4, true);
   }
 
   OrderRequest MakeRequest(char const* id = "rb2701") {
@@ -492,6 +508,79 @@ TEST_F(TdGatewayTest, CommissionRateLandsInRateTable) {
   ASSERT_TRUE(c.has_value());
   EXPECT_DOUBLE_EQ(c->open_by_money, 0.0001);
   EXPECT_DOUBLE_EQ(c->close_today_by_volume, 3.0);
+}
+
+CThostFtdcOrderField MakeOrderField(char const* ref,
+                                    TThostFtdcOrderStatusType status) {
+  CThostFtdcOrderField f{};
+  std::strcpy(f.InstrumentID, "rb2701");
+  std::strcpy(f.ExchangeID, "SHFE");
+  std::strcpy(f.OrderRef, ref);
+  std::strcpy(f.OrderSysID, "777");
+  f.OrderStatus = status;
+  f.Direction = THOST_FTDC_D_Buy;
+  f.CombOffsetFlag[0] = THOST_FTDC_OF_Open;
+  f.VolumeTotalOriginal = 1;
+  f.FrontID = 3;
+  f.SessionID = 55;
+  return f;
+}
+
+TEST_F(TdGatewayTest, ReadyWaitsForTheOrderQuery) {
+  Connect();
+  fake->spi->OnFrontConnected();
+  fake->spi->OnRspAuthenticate(nullptr, nullptr, 1, true);
+  CThostFtdcRspUserLoginField rsp{};
+  rsp.FrontID = 7;
+  rsp.SessionID = 99;
+  fake->spi->OnRspUserLogin(&rsp, nullptr, 2, true);
+  fake->spi->OnRspSettlementInfoConfirm(nullptr, nullptr, 3, true);
+  // Settlement confirmed but the order query is still pending
+  EXPECT_FALSE(gateway.ready());
+  EXPECT_EQ(fake->qry_order_calls, 1);
+
+  fake->spi->OnRspQryOrder(nullptr, nullptr, 4, true);
+  EXPECT_TRUE(gateway.ready());
+}
+
+TEST_F(TdGatewayTest, QueriedActiveOrderRegainsItsCancelKey) {
+  Connect();
+  // An order placed before the restart: alive at the broker, unknown locally
+  auto const alive =
+      MakeOrderField("000000000050", THOST_FTDC_OST_NoTradeQueueing);
+  ReadyUp(0, {alive});
+  EXPECT_TRUE(gateway.ready());
+
+  EXPECT_EQ(gateway.CancelOrder("000000000050"), 0);
+  ASSERT_EQ(fake->action_reqs.size(), 1u);
+  auto const& f = fake->action_reqs[0];
+  EXPECT_STREQ(f.OrderSysID, "777");  // exchange-side key survives the restart
+  EXPECT_STREQ(f.InstrumentID, "rb2701");
+  EXPECT_STREQ(f.ExchangeID, "SHFE");
+}
+
+TEST_F(TdGatewayTest, QueriedTerminalOrderGetsNoCancelKey) {
+  Connect();
+  auto const dead = MakeOrderField("000000000051", THOST_FTDC_OST_AllTraded);
+  ReadyUp(0, {dead});
+  EXPECT_EQ(gateway.CancelOrder("000000000051"), -1);
+}
+
+TEST_F(TdGatewayTest, RtnOrderAdoptsUnknownAliveRef) {
+  Connect();
+  ReadyUp();
+  // A RESUME replay delivers a report for an order this process never sent
+  auto report = MakeOrderField("000000000052", THOST_FTDC_OST_NoTradeQueueing);
+  fake->spi->OnRtnOrder(&report);
+  EXPECT_EQ(gateway.CancelOrder("000000000052"), 0);
+  EXPECT_STREQ(fake->action_reqs[0].OrderSysID, "777");
+}
+
+TEST_F(TdGatewayTest, RefusedOrderQueryStillReadiesDegraded) {
+  Connect();
+  fake->qry_order_rc = -2;  // e.g. front queue clogged
+  ReadyUp();
+  EXPECT_TRUE(gateway.ready());  // trade degraded, never blocked
 }
 
 }  // namespace

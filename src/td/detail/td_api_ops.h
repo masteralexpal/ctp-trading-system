@@ -54,6 +54,9 @@ class TdApiOps {
   // Account snapshot; answered once via OnRspQryTradingAccount
   virtual int ReqQryTradingAccount(CThostFtdcQryTradingAccountField* req,
                                    int request_id) = 0;
+  // Today's orders (empty filter = all); answered in batches via
+  // OnRspQryOrder. Fired after settlement confirm to rebuild cancel keys
+  virtual int ReqQryOrder(CThostFtdcQryOrderField* req, int request_id) = 0;
   // Per-instrument margin/commission (on demand; whole-market is infeasible
   // under the 1 query/sec throttle)
   virtual int ReqQryInstrumentMarginRate(
@@ -113,6 +116,9 @@ class CtpTdApiOps final : public TdApiOps {
   int ReqQryTradingAccount(CThostFtdcQryTradingAccountField* req,
                            int request_id) override {
     return api_->ReqQryTradingAccount(req, request_id);
+  }
+  int ReqQryOrder(CThostFtdcQryOrderField* req, int request_id) override {
+    return api_->ReqQryOrder(req, request_id);
   }
   int ReqQryInstrumentMarginRate(CThostFtdcQryInstrumentMarginRateField* req,
                                  int request_id) override {

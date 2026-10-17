@@ -17,6 +17,24 @@
 #include "td/detail/order_ctp.h"
 
 namespace cts::td::detail {
+namespace {
+
+// Exchange-terminal statuses: the order is dead, no cancel key needed.
+// Everything else (queueing, not-touched, touched, unknown) is treated as
+// alive -- a spurious key is harmless, a missing one is not
+bool IsAliveStatus(TThostFtdcOrderStatusType s) {
+  switch (s) {
+    case THOST_FTDC_OST_AllTraded:
+    case THOST_FTDC_OST_Canceled:
+    case THOST_FTDC_OST_NoTradeNotQueueing:
+    case THOST_FTDC_OST_PartTradedNotQueueing:
+      return false;
+    default:
+      return true;
+  }
+}
+
+}  // namespace
 
 TdSpiAdapter::TdSpiAdapter(TdApiOps* api,
                            TdGatewayConfig config,
@@ -160,8 +178,58 @@ void TdSpiAdapter::OnRspSettlementInfoConfirm(
     FailChain(base::GbkToUtf8(info->ErrorMsg));
     return;
   }
+  // Query today's orders before going ready: the answer rebuilds the cancel
+  // keys of orders placed before a restart/reconnect (their front/session
+  // died with the old session; OrderSysID survives)
+  CThostFtdcQryOrderField req{};
+  base::CopyToFixedArray(req.BrokerID, config_.broker_id);
+  base::CopyToFixedArray(req.InvestorID, config_.investor_id);
+  int const rc = api_->ReqQryOrder(&req, request_id_.fetch_add(1) + 1);
+  if (rc != 0) {
+    // Query refused: trade degraded rather than not at all -- pre-restart
+    // orders stay uncancellable until the next reconnect re-runs the chain
+    delegate_.OnTdError(rc, "order query refused, cancel keys degraded");
+    SetReady();
+  }
+}
+
+void TdSpiAdapter::OnRspQryOrder(CThostFtdcOrderField* order,
+                                 CThostFtdcRspInfoField* info,
+                                 int /*request_id*/,
+                                 bool is_last) {
+  if (info != nullptr && info->ErrorID != 0) {
+    delegate_.OnTdError(info->ErrorID, base::GbkToUtf8(info->ErrorMsg));
+    SetReady();  // same degraded trade-off as a refused send
+    return;
+  }
+  if (order != nullptr) {
+    OrderReport const report = OrderReportFromCtp(*order);
+    if (IsAliveStatus(order->OrderStatus)) {
+      UpsertCancelKey(report);
+    }
+    delegate_.OnTdOrder(report);  // restores the OMS journal along the way
+  }
+  if (is_last) {
+    SetReady();
+  }
+}
+
+void TdSpiAdapter::SetReady() {
   ready_.store(true, std::memory_order_release);
   delegate_.OnTdReady(true, "");
+}
+
+void TdSpiAdapter::UpsertCancelKey(OrderReport const& report) {
+  std::lock_guard lock(mutex_);
+  auto const [it, inserted] =
+      orders_.try_emplace(std::string(report.order_ref), OrderContext{});
+  it->second.front_id = report.front_id;
+  it->second.session_id = report.session_id;
+  base::CopyToFixedArray(it->second.exchange_id, report.exchange_id);
+  base::CopyToFixedArray(it->second.instrument_id, report.instrument_id);
+  if (report.order_sys_id[0] != '\0') {
+    base::CopyToFixedArray(it->second.order_sys_id, report.order_sys_id);
+  }
 }
 
 void TdSpiAdapter::OnRspOrderInsert(CThostFtdcInputOrderField* req,
@@ -283,10 +351,11 @@ void TdSpiAdapter::OnRspQryInstrumentCommissionRate(
   }
 }
 
-void TdSpiAdapter::OnRspQryTradingAccount(CThostFtdcTradingAccountField* account,
-                                          CThostFtdcRspInfoField* info,
-                                          int /*request_id*/,
-                                          bool /*is_last*/) {
+void TdSpiAdapter::OnRspQryTradingAccount(
+    CThostFtdcTradingAccountField* account,
+    CThostFtdcRspInfoField* info,
+    int /*request_id*/,
+    bool /*is_last*/) {
   if (info != nullptr && info->ErrorID != 0) {
     delegate_.OnTdError(info->ErrorID, base::GbkToUtf8(info->ErrorMsg));
     return;
@@ -310,13 +379,12 @@ void TdSpiAdapter::OnRspQryInvestorPosition(
     if (PositionRowFromCtp(*position, row) &&
         (row.yd_volume > 0 || row.today_volume > 0)) {
       // Merge into the pending row of the same (instrument, side)
-      auto it = std::find_if(pending_positions_.begin(),
-                             pending_positions_.end(),
-                             [&](PositionRow const& p) {
-                               return p.direction == row.direction &&
-                                      std::string_view(p.instrument_id) ==
-                                          row.instrument_id;
-                             });
+      auto it = std::find_if(
+          pending_positions_.begin(), pending_positions_.end(),
+          [&](PositionRow const& p) {
+            return p.direction == row.direction &&
+                   std::string_view(p.instrument_id) == row.instrument_id;
+          });
       if (it == pending_positions_.end()) {
         pending_positions_.push_back(row);
       } else {
@@ -326,9 +394,8 @@ void TdSpiAdapter::OnRspQryInvestorPosition(
     }
   }
   if (is_last) {
-    delegate_.OnTdPositions(
-        std::make_shared<std::vector<PositionRow> const>(
-            std::move(pending_positions_)));
+    delegate_.OnTdPositions(std::make_shared<std::vector<PositionRow> const>(
+        std::move(pending_positions_)));
     pending_positions_.clear();
   }
 }
@@ -357,21 +424,14 @@ void TdSpiAdapter::OnRtnOrder(CThostFtdcOrderField* order) {
     return;
   }
   OrderReport const report = OrderReportFromCtp(*order);
-  {
+  if (report.status == OrderStatus::kAllTraded ||
+      report.status == OrderStatus::kCanceled) {
     std::lock_guard lock(mutex_);
-    if (report.status == OrderStatus::kAllTraded ||
-        report.status == OrderStatus::kCanceled) {
-      orders_.erase(report.order_ref);  // terminal: no longer cancellable
-    } else if (auto const it = orders_.find(report.order_ref);
-               it != orders_.end()) {
-      // Refresh the cancel key: authoritative front/session, plus the
-      // exchange-side sys id (the reconnect-proof half)
-      it->second.front_id = report.front_id;
-      it->second.session_id = report.session_id;
-      if (report.order_sys_id[0] != '\0') {
-        base::CopyToFixedArray(it->second.order_sys_id, report.order_sys_id);
-      }
-    }
+    orders_.erase(report.order_ref);  // terminal: no longer cancellable
+  } else {
+    // Adopt unknown refs too: a RESUME replay can deliver reports for
+    // orders placed before a restart, and they must stay cancellable
+    UpsertCancelKey(report);
   }
   delegate_.OnTdOrder(report);
 }

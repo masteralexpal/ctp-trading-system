@@ -32,7 +32,12 @@ namespace cts::td::detail {
 //   OnFrontConnected -> ReqAuthenticate
 //   -> OnRspAuthenticate -> ReqUserLogin
 //   -> OnRspUserLogin -> ReqSettlementInfoConfirm
-//   -> OnRspSettlementInfoConfirm -> OnTdReady
+//   -> OnRspSettlementInfoConfirm -> ReqQryOrder
+//   -> OnRspQryOrder(is_last) -> OnTdReady
+// The order query is part of the chain so that orders placed before a
+// restart (or a reconnect) get their cancel keys rebuilt before trading
+// resumes; queried rows also flow to the delegate as OnTdOrder so the OMS
+// journal comes back with them.
 // OrderRef is seeded from MaxOrderRef at login and allocated atomically
 // (zero-padded 12-digit), unique across reconnects within the trading day.
 //
@@ -110,11 +115,14 @@ class TdSpiAdapter final : public CThostFtdcTraderSpi {
                               CThostFtdcRspInfoField* info,
                               int request_id,
                               bool is_last) override;
-  void OnRspQryInstrumentMarginRate(
-      CThostFtdcInstrumentMarginRateField* rate,
-      CThostFtdcRspInfoField* info,
-      int request_id,
-      bool is_last) override;
+  void OnRspQryOrder(CThostFtdcOrderField* order,
+                     CThostFtdcRspInfoField* info,
+                     int request_id,
+                     bool is_last) override;
+  void OnRspQryInstrumentMarginRate(CThostFtdcInstrumentMarginRateField* rate,
+                                    CThostFtdcRspInfoField* info,
+                                    int request_id,
+                                    bool is_last) override;
   void OnRspQryInstrumentCommissionRate(
       CThostFtdcInstrumentCommissionRateField* rate,
       CThostFtdcRspInfoField* info,
@@ -141,6 +149,12 @@ class TdSpiAdapter final : public CThostFtdcTraderSpi {
 
   std::string NextOrderRef();  // zero-padded 12-digit, monotonic
   void FailChain(std::string_view msg);
+  // ready = settlement confirmed AND today's orders re-queried (the cancel
+  // key table is rebuilt from the answer before trading is allowed)
+  void SetReady();
+  // Insert or refresh the cancel key of a live order, from either a push
+  // report or a query row; unknown refs are adopted, not ignored
+  void UpsertCancelKey(OrderReport const& report);
 
   TdApiOps* api_;
   TdGatewayConfig config_;
