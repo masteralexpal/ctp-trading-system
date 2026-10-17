@@ -115,5 +115,42 @@ TEST_F(CheckedOrderSinkTest, PositionCapCountsNetAfterOpen) {
       sink_.InsertOrder(MakeReq(2, 3500, td::Offset::kCloseToday)).empty());
 }
 
+TEST_F(CheckedOrderSinkTest, MarginEstimateRejectsOverAvailable) {
+  td::RateTable rates;
+  td::MarginRate rate{};
+  std::strncpy(rate.instrument_id, "rb2701", sizeof(rate.instrument_id) - 1);
+  rate.long_ratio = 0.1;
+  rate.short_ratio = 0.1;
+  rates.Update(rate);
+  sink_.SetRateTable(&rates);
+  sink_.SetInstrumentMaster(
+      std::make_shared<instrument::InstrumentMaster>(
+          instrument::InstrumentMaster::Build({[] {
+            instrument::Instrument i;
+            i.instrument_id = "rb2701";
+            i.volume_multiple = 10;
+            return i;
+          }()})));
+
+  td::AccountReport account{};
+  account.balance = 4000;
+  account.available = 4000;
+  ledger_.OnTdAccount(account);
+
+  // est = 3500 * 1 * 10 * 0.1 = 3500 > 4000 * 0.8 = 3200
+  EXPECT_TRUE(sink_.InsertOrder(MakeReq(1)).empty());
+  EXPECT_TRUE(inner_.inserted.empty());
+
+  // Enough available: the same order passes
+  account.available = 10000;
+  ledger_.OnTdAccount(account);
+  EXPECT_FALSE(sink_.InsertOrder(MakeReq(1)).empty());
+}
+
+TEST_F(CheckedOrderSinkTest, MarginCheckSkippedWhenInputsUnknown) {
+  // No rate table, no account: opens must not be blocked
+  EXPECT_FALSE(sink_.InsertOrder(MakeReq(1)).empty());
+}
+
 }  // namespace
 }  // namespace cts::oms

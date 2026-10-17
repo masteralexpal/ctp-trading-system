@@ -265,6 +265,7 @@ int RunTrading(cts::app::AppConfig const& cfg) {
   if (master != nullptr) {
     risk_sink.SetInstrumentMaster(master);
   }
+  risk_sink.SetRateTable(&td_gateway.rates());
 
   if (!cfg.instruments.empty()) {
     if (md_gateway.Subscribe(cfg.instruments) == 0) {

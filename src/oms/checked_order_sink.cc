@@ -58,6 +58,34 @@ std::string CheckedOrderSink::InsertOrder(td::OrderRequest const& req) {
     }
   }
 
+  // Margin estimate for opens: price * volume * multiple * ratio vs the
+  // account's available. Skipped (not failed) when any input is unknown --
+  // a missing rate table must not block order flow
+  if (req.offset == td::Offset::kOpen) {
+    auto const* rates = rates_.load(std::memory_order_acquire);
+    auto const account = ledger_.account();
+    auto const master = master_.load();
+    if (rates != nullptr && account.has_value() && master != nullptr) {
+      auto const rate = rates->FindMargin(req.instrument_id);
+      auto const* inst = master->Find(req.instrument_id);
+      if (rate.has_value() && inst != nullptr && inst->volume_multiple > 0) {
+        double const ratio = req.direction == td::Direction::kBuy
+                                 ? rate->long_ratio
+                                 : rate->short_ratio;
+        double const estimate = req.limit_price * req.volume *
+                                inst->volume_multiple * ratio;
+        if (estimate > account->available * limits_.max_margin_usage) {
+          SPDLOG_WARN(
+              "risk: order rejected, margin estimate {:.0f} exceeds {:.0f} "
+              "(available {:.0f} * {:.2f})",
+              estimate, account->available * limits_.max_margin_usage,
+              account->available, limits_.max_margin_usage);
+          return {};
+        }
+      }
+    }
+  }
+
   return inner_.InsertOrder(req);
 }
 

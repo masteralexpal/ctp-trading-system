@@ -16,6 +16,7 @@
 
 #include "instrument/instrument_master.h"
 #include "td/order_sink.h"
+#include "td/rate_table.h"
 
 namespace cts::oms {
 
@@ -26,6 +27,9 @@ struct RiskLimits {
   std::int32_t max_order_volume{10};
   // Net position cap per instrument; 0 = unlimited
   std::int32_t max_position_per_instrument{0};
+  // Estimated margin of an open must fit under available * this ratio;
+  // skipped when the rate or the account snapshot is unknown
+  double max_margin_usage{0.8};
 };
 
 // Synchronous pre-trade checks; a reject returns an empty ref, the same
@@ -45,6 +49,10 @@ class CheckedOrderSink final : public td::OrderSink {
       std::shared_ptr<instrument::InstrumentMaster const> master) {
     master_.store(std::move(master));
   }
+  // Any thread; the table is gateway-owned and outlives this sink
+  void SetRateTable(td::RateTable const* rates) {
+    rates_.store(rates, std::memory_order_release);
+  }
 
   // Kill switch: reject new orders until Resume
   void Halt() { halted_.store(true, std::memory_order_release); }
@@ -57,6 +65,7 @@ class CheckedOrderSink final : public td::OrderSink {
   RiskLimits const limits_;
   std::atomic<bool> halted_{false};
   std::atomic<std::shared_ptr<instrument::InstrumentMaster const>> master_;
+  std::atomic<td::RateTable const*> rates_{nullptr};
 };
 
 }  // namespace cts::oms
