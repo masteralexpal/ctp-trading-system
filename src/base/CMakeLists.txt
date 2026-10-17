@@ -15,6 +15,7 @@ target_sources(
             FILES
                 base_export.h
                 charset.h
+                futex_park.h
                 futex_utils.h
                 iconv_converter.h
                 latest_spsc_queue.h
@@ -41,6 +42,7 @@ if(CTS_ENABLE_UNIT_TESTS)
     add_executable(
         base_test
         tests/charset_test.cc
+        tests/futex_park_test.cc
         tests/latest_spsc_queue_test.cc
         tests/no_destructor_test.cc
         # task_loop_test must precede shutdown_test: the shutdown flag is

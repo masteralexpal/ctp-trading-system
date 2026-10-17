@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/futex_park.h"
 #include "base/spsc_queue.h"
 #include "md/detail/md_event.h"
 #include "md/md_client.h"
@@ -91,8 +92,7 @@ class MdDispatcher final : public MdDelegate {
   std::vector<MdClient*> clients_;
   std::atomic<bool> stop_requested_{false};
   std::atomic<bool> logged_in_{false};  // dispatch-thread written
-  std::atomic<std::uint32_t> wake_{0};  // futex parking word
-  std::atomic<bool> parked_{false};     // gates producer-side wakes
+  base::FutexPark park_;
 };
 
 }  // namespace cts::md

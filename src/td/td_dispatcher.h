@@ -10,10 +10,10 @@
 
 #include <atomic>
 #include <cstddef>
-#include <cstdint>
 #include <utility>
 #include <vector>
 
+#include "base/futex_park.h"
 #include "base/spsc_queue.h"
 #include "td/detail/td_event.h"
 #include "td/td_client.h"
@@ -97,9 +97,8 @@ class TdDispatcher final : public TdDelegate {
   base::SpscQueue<detail::TdEvent, 4096> queue_;
   std::vector<TdClient*> clients_;
   std::atomic<bool> stop_requested_{false};
-  std::atomic<bool> ready_{false};      // dispatch-thread written
-  std::atomic<std::uint32_t> wake_{0};  // futex parking word
-  std::atomic<bool> parked_{false};     // gates producer-side wakes
+  std::atomic<bool> ready_{false};  // dispatch-thread written
+  base::FutexPark park_;
 };
 
 }  // namespace cts::td
