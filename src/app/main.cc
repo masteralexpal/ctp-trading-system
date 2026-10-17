@@ -171,6 +171,11 @@ int RunTrading(cts::app::AppConfig const& cfg) {
   // --- td side ---
   cts::td::ConsoleTdClient td_client;
   cts::oms::OrderManager order_manager;  // order journal + position ledger
+  // Restart recovery: restore ledger/journal from the last snapshot before
+  // any event arrives; the broker reconcile stays authoritative on volumes
+  std::filesystem::create_directories(cfg.state_dir);
+  order_manager.SetSnapshotPath(cfg.state_dir + "/oms.txt");
+  order_manager.LoadSnapshot();
   cts::td::TdDispatcher td_dispatcher;
   td_dispatcher.AddClient(td_client);
   td_dispatcher.AddClient(order_manager);
@@ -322,6 +327,7 @@ int RunTrading(cts::app::AppConfig const& cfg) {
   if (strategy != nullptr) {
     strategy->Stop();
   }
+  order_manager.SaveSnapshot();  // explicit final save before the drain
   td_gateway.Disconnect();
   md_gateway.Disconnect();
   stop_all();

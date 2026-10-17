@@ -25,6 +25,9 @@ struct AppConfig {
   // Root dir of CTP flow files (.con resume bookmarks);
   // filled by the CLI layer ($HOME/.cts/flow); gateways add per-role subdirs
   std::string flow_dir;
+  // OMS snapshot dir ($HOME/.cts/state); restart recovery for the ledger
+  // and the order journal
+  std::string state_dir;
 
   // SMA-cross demo strategy; empty instrument = no strategy
   std::string strategy_instrument;

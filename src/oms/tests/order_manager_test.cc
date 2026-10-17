@@ -6,6 +6,7 @@
 #include "oms/order_manager.h"
 
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <string_view>
 #include <vector>
@@ -230,6 +231,50 @@ TEST(OrderManagerTest, ReconcileAdoptsBrokerBuckets) {
   EXPECT_EQ(rb->today_volume, 3);  // broker adopted
   EXPECT_EQ(FindPosition(positions, "au2512", td::Direction::kSell), nullptr)
       << "zeroed and flat-with-zero-pnl entries drop out of the snapshot";
+}
+
+TEST(OrderManagerTest, SnapshotRoundTrip) {
+  auto const path = std::filesystem::temp_directory_path() /
+                    "cts_oms_snapshot_test.txt";
+  std::filesystem::remove(path);
+  {
+    OrderManager oms;
+    oms.SetSnapshotPath(path);
+    oms.OnTdOrder(
+        MakeOrder("000000000001", "rb2701", td::OrderStatus::kAllTraded, 2, 2));
+    oms.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,
+                            3500, 2, "20261017", "000000000001"));
+    oms.OnTdTrade(MakeTrade("rb2701", td::Direction::kSell,
+                            td::Offset::kCloseToday, 3510, 1, "20261017",
+                            "000000000002"));
+    td::AccountReport acc{};
+    acc.balance = 1000000;
+    acc.available = 990000;
+    oms.OnTdAccount(acc);
+  }  // saved on every event; dtor without save must not lose state
+
+  OrderManager restored;
+  restored.SetSnapshotPath(path);
+  ASSERT_TRUE(restored.LoadSnapshot());
+  EXPECT_EQ(restored.trading_day(), "20261017");
+  auto const positions = restored.positions();
+  auto const* rb = FindPosition(positions, "rb2701", td::Direction::kBuy);
+  ASSERT_NE(rb, nullptr);
+  EXPECT_EQ(rb->today_volume, 1);
+  EXPECT_DOUBLE_EQ(rb->avg_price, 3500);
+  EXPECT_DOUBLE_EQ(rb->realized_pnl, 10);  // (3510-3500) * 1 * multiple 1
+  EXPECT_EQ(restored.orders().size(), 1u);
+  ASSERT_TRUE(restored.account().has_value());
+  EXPECT_DOUBLE_EQ(restored.account()->balance, 1000000);
+  std::filesystem::remove(path);
+}
+
+TEST(OrderManagerTest, LoadSnapshotMissingFileIsFreshStart) {
+  OrderManager oms;
+  oms.SetSnapshotPath(std::filesystem::temp_directory_path() /
+                      "cts_oms_no_such_file.txt");
+  EXPECT_FALSE(oms.LoadSnapshot());
+  EXPECT_TRUE(oms.positions().empty());
 }
 
 }  // namespace

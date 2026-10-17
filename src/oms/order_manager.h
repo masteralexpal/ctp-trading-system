@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -65,6 +66,15 @@ class OrderManager final : public td::TdClient {
     master_.store(std::move(master));
   }
 
+  // Snapshot persistence (restart recovery). Load before any events arrive;
+  // once a path is set, every order/trade event rewrites the file (tmp +
+  // rename; tiny file, event rate is low). The broker snapshot still wins at
+  // reconcile -- local state restores what the broker lacks: avg_price,
+  // realized_pnl, the order journal
+  void SetSnapshotPath(std::filesystem::path path);
+  bool LoadSnapshot();   // false on missing/corrupt file (fresh start)
+  void SaveSnapshot();   // public for the explicit shutdown save
+
   // td::TdClient (td dispatch thread)
   void OnTdConnected() override {}
   void OnTdDisconnected(int /*reason*/) override {}
@@ -102,12 +112,14 @@ class OrderManager final : public td::TdClient {
   void RollTradingDay(std::string_view day);
   void ApplyTrade(td::TradeReport const& trade);
   int VolumeMultiple(std::string_view instrument_id) const;
+  void SaveLocked();  // write the snapshot; mutex_ held, path set
 
   mutable std::mutex mutex_;
   std::unordered_map<std::string, OrderEntry> journal_;
   std::unordered_map<Key, Position, KeyHash> ledger_;
   std::string current_day_;
   std::optional<td::AccountReport> account_;
+  std::filesystem::path snapshot_path_;  // empty = persistence off
   std::atomic<std::shared_ptr<instrument::InstrumentMaster const>> master_;
 };
 

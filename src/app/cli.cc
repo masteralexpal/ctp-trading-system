@@ -45,6 +45,12 @@ std::unique_ptr<CLI::App> BuildApp(AppConfig& cfg) {
         home != nullptr ? std::string(home) + "/.cts/flow" : ".cts/flow";
   }
   app->add_option("--flow-dir", cfg.flow_dir, "root dir of CTP flow files");
+  if (cfg.state_dir.empty()) {
+    cfg.state_dir =
+        home != nullptr ? std::string(home) + "/.cts/state" : ".cts/state";
+  }
+  app->add_option("--state-dir", cfg.state_dir,
+                  "OMS snapshot dir (restart recovery)");
   app->add_option("--strategy-instrument", cfg.strategy_instrument,
                   "run the SMA-cross demo strategy on this instrument "
                   "(empty disables)");
