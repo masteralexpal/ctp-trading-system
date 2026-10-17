@@ -31,6 +31,8 @@ struct Instrument {
   std::string expire_date;  // expiry date (input to the roll engine)
   double price_tick{0.0};   // tick size (mandatory for order price rounding)
   int volume_multiple{0};   // volume multiple (mandatory for PnL)
+  // Exchange per-order volume cap for limit orders; 0 = unknown
+  int max_limit_order_volume{0};
 };
 
 }  // namespace cts::instrument

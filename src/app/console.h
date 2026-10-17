@@ -23,6 +23,7 @@ class TdGateway;
 }
 
 namespace cts::oms {
+class CheckedOrderSink;
 class OrderManager;
 }
 
@@ -46,6 +47,7 @@ class Console {
           md::MdDispatcher const& md_dispatcher,
           td::TdGateway& td_gateway,
           oms::OrderManager& order_manager,
+          oms::CheckedOrderSink& risk_sink,
           strategy::SmaCrossStrategy* strategy);  // nullptr = no strategy
   ~Console() = default;
 
@@ -64,6 +66,7 @@ class Console {
   md::MdDispatcher const& md_dispatcher_;
   td::TdGateway& td_gateway_;
   oms::OrderManager& order_manager_;
+  oms::CheckedOrderSink& risk_sink_;  // all order flow goes through risk
   strategy::SmaCrossStrategy* strategy_;
   std::string pending_;  // partial line between reads
 };

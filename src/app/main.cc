@@ -20,6 +20,7 @@
 #include "md/console_md_client.h"
 #include "md/md_dispatcher.h"
 #include "md/md_gateway.h"
+#include "oms/checked_order_sink.h"
 #include "oms/order_manager.h"
 #include "strategy/sma_cross_strategy.h"
 #include "td/console_td_client.h"
@@ -94,12 +95,49 @@ bool WaitTdReady(cts::td::TdDispatcher const& dispatcher,
   return dispatcher.ready();
 }
 
+// Re-fires reconciliation queries after every (re)connect, spaced to respect
+// the CTP query throttle (~1 query/sec)
+class Reconciler final : public cts::td::TdClient {
+ public:
+  Reconciler(cts::base::TaskLoop& loop, cts::td::TdGateway& gateway)
+      : loop_(loop), gateway_(gateway) {}
+
+  void OnTdConnected() override {}
+  void OnTdDisconnected(int /*reason*/) override {}
+  void OnTdReady(bool success, std::string_view /*msg*/) override {
+    if (!success) {
+      return;
+    }
+    loop_.PostDelayedTask([this] { gateway_.QueryPositions(); },
+                          std::chrono::milliseconds{1200});
+    loop_.PostDelayedTask([this] { gateway_.QueryAccount(); },
+                          std::chrono::milliseconds{2400});
+  }
+  void OnTdOrder(cts::td::OrderReport const& /*order*/) override {}
+  void OnTdTrade(cts::td::TradeReport const& /*trade*/) override {}
+  void OnTdPositions(
+      std::shared_ptr<std::vector<cts::td::PositionRow> const>) override {}
+  void OnTdAccount(cts::td::AccountReport const&) override {}
+  void OnTdError(int, std::string_view) override {}
+
+ private:
+  cts::base::TaskLoop& loop_;
+  cts::td::TdGateway& gateway_;
+};
+
 // Main pipeline: md + td gateways -> instrument master -> strategy ->
 // park on the main loop -> graceful stop.
 // Shutdown: first Ctrl-C sets the shutdown flag (futex wake, no polling);
 // a second Ctrl-C _Exit()s immediately
 int RunTrading(cts::app::AppConfig const& cfg) {
   SPDLOG_INFO("ctp-trading-system v{} starting", cts::base::Version());
+
+  // Objects first, connects later: the Reconciler wires the loop and the td
+  // gateway before either starts moving
+  cts::base::TaskLoop loop;
+  cts::md::MdGateway md_gateway;
+  cts::td::TdGateway td_gateway;
+  Reconciler reconciler{loop, td_gateway};
 
   // --- md side ---
   cts::md::ConsoleMdClient client;
@@ -115,6 +153,7 @@ int RunTrading(cts::app::AppConfig const& cfg) {
   cts::td::TdDispatcher td_dispatcher;
   td_dispatcher.AddClient(td_client);
   td_dispatcher.AddClient(order_manager);
+  td_dispatcher.AddClient(reconciler);
 
   cts::base::Thread td_dispatch_thread{"td-dispatch"};
   td_dispatch_thread.Start([&td_dispatcher] { td_dispatcher.Run(); });
@@ -128,7 +167,6 @@ int RunTrading(cts::app::AppConfig const& cfg) {
 
   // flow dirs = configured root + role subdir (trailing slash fixed by
   // gateways)
-  cts::md::MdGateway md_gateway;
   md_gateway.Connect(
       {
           .front = cfg.md_front,
@@ -139,7 +177,6 @@ int RunTrading(cts::app::AppConfig const& cfg) {
       },
       dispatcher);
 
-  cts::td::TdGateway td_gateway;
   td_gateway.Connect(
       {
           .front = cfg.trader_front,
@@ -191,8 +228,12 @@ int RunTrading(cts::app::AppConfig const& cfg) {
     order_manager.SetInstrumentMaster(master);
   }
 
-  // Reconcile the ledger against the broker snapshot (empty when flat)
-  td_gateway.QueryPositions();
+  // Pre-trade risk gate: all order flow (console + strategy) goes through it.
+  // Position/account reconciliation is the Reconciler's job (throttle-spaced)
+  cts::oms::CheckedOrderSink risk_sink{td_gateway, order_manager, {}};
+  if (master != nullptr) {
+    risk_sink.SetInstrumentMaster(master);
+  }
 
   if (!cfg.instruments.empty()) {
     if (md_gateway.Subscribe(cfg.instruments) == 0) {
@@ -217,7 +258,7 @@ int RunTrading(cts::app::AppConfig const& cfg) {
               .slow = cfg.strategy_slow,
               .volume = cfg.strategy_volume,
           },
-          td_gateway);
+          risk_sink);
       dispatcher.AddClient(*strategy);
       td_dispatcher.AddClient(*strategy);
       strategy->Start();
@@ -231,7 +272,6 @@ int RunTrading(cts::app::AppConfig const& cfg) {
 
   // The main thread is a task loop: periodic housekeeping lives here.
   // Shutdown (first Ctrl-C) wakes and stops it via the shutdown wake word
-  cts::base::TaskLoop loop;
   struct HealthTick {
     cts::base::TaskLoop* loop;
     cts::md::MdDispatcher const* dispatcher;
@@ -245,7 +285,8 @@ int RunTrading(cts::app::AppConfig const& cfg) {
 
   // Dev console: stdin lines become tasks on this loop; no-op without a TTY
   cts::app::Console console{loop,       md_gateway, dispatcher,
-                            td_gateway, order_manager, strategy.get()};
+                            td_gateway, order_manager, risk_sink,
+                            strategy.get()};
   console.Start();
 
   loop.Run();

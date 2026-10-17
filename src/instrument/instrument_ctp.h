@@ -26,6 +26,7 @@ inline Instrument InstrumentFromCtp(CThostFtdcInstrumentField const& f) {
   inst.expire_date = f.ExpireDate;
   inst.price_tick = f.PriceTick;
   inst.volume_multiple = f.VolumeMultiple;
+  inst.max_limit_order_volume = f.MaxLimitOrderVolume;
   switch (f.ProductClass) {
     case THOST_FTDC_PC_Futures:
       inst.product_class = ProductClass::kFutures;

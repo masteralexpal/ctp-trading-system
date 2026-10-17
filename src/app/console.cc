@@ -20,6 +20,7 @@
 #include "base/string_utils.h"
 #include "md/md_dispatcher.h"
 #include "md/md_gateway.h"
+#include "oms/checked_order_sink.h"
 #include "oms/order_manager.h"
 #include "strategy/sma_cross_strategy.h"
 #include "td/td_gateway.h"
@@ -82,12 +83,14 @@ Console::Console(base::TaskLoop& loop,
                  md::MdDispatcher const& md_dispatcher,
                  td::TdGateway& td_gateway,
                  oms::OrderManager& order_manager,
+                 oms::CheckedOrderSink& risk_sink,
                  strategy::SmaCrossStrategy* strategy)
     : loop_(loop),
       md_gateway_(md_gateway),
       md_dispatcher_(md_dispatcher),
       td_gateway_(td_gateway),
       order_manager_(order_manager),
+      risk_sink_(risk_sink),
       strategy_(strategy) {}
 
 void Console::Start() {
@@ -141,6 +144,11 @@ void Console::Execute(std::string_view line) {
                  "orders                 order journal (OMS)\n"
                  "positions              position ledger (OMS)\n"
                  "reconcile              query broker positions into the OMS\n"
+                 "account                latest account snapshot\n"
+                 "kill                   halt orders, stop strategy, cancel all\n"
+                 "resume                 clear the kill switch\n"
+                 "roll <old> <new> <close_px> <open_px>\n"
+                 "                       close old position, open same on new\n"
                  "strategy [start|stop]  strategy status/control\n"
                  "log-level <level>      trace|debug|info|warn|error\n"
                  "quit                   graceful shutdown\n";
@@ -176,7 +184,7 @@ void Console::Execute(std::string_view line) {
           req.volume = volume;
           base::CopyToFixedArray(req.instrument_id, inst->instrument_id);
           base::CopyToFixedArray(req.exchange_id, inst->exchange_id);
-          std::string const ref = td_gateway_.InsertOrder(req);
+          std::string const ref = risk_sink_.InsertOrder(req);
           std::cout << (ref.empty() ? "rejected locally (td not ready)\n"
                                     : "accepted, ref=" + ref + "\n");
         }
@@ -186,7 +194,7 @@ void Console::Execute(std::string_view line) {
     if (args.empty()) {
       std::cout << "usage: cancel <order_ref>\n";
     } else {
-      int const rc = td_gateway_.CancelOrder(args);
+      int const rc = risk_sink_.CancelOrder(args);
       std::cout << (rc == 0 ? "cancel accepted\n"
                             : "cancel rejected (unknown ref or not ready)\n");
     }
@@ -216,6 +224,100 @@ void Console::Execute(std::string_view line) {
     int const rc = td_gateway_.QueryPositions();
     std::cout << (rc == 0 ? "position query sent; answer arrives async\n"
                           : "rejected (td not ready)\n");
+  } else if (cmd == "account") {
+    auto const acc = order_manager_.account();
+    if (!acc) {
+      std::cout << "no account snapshot yet (reconcile first)\n";
+    } else {
+      std::cout << "balance:   " << acc->balance
+                << "\navailable: " << acc->available
+                << "\nmargin:    " << acc->margin
+                << "\nfrozen:    " << acc->frozen_margin
+                << "\nclose_pnl: " << acc->close_profit
+                << "\npos_pnl:   " << acc->position_profit << "\n";
+    }
+  } else if (cmd == "kill") {
+    risk_sink_.Halt();
+    if (strategy_ != nullptr) {
+      strategy_->Stop();
+    }
+    int canceled = 0;
+    for (auto const& e : order_manager_.orders()) {
+      if (e.report.status == td::OrderStatus::kSubmitted ||
+          e.report.status == td::OrderStatus::kPartTraded) {
+        risk_sink_.CancelOrder(e.report.order_ref);
+        ++canceled;
+      }
+    }
+    std::cout << "kill switch engaged, " << canceled
+              << " working orders canceled\n";
+  } else if (cmd == "resume") {
+    risk_sink_.Resume();
+    std::cout << "kill switch cleared\n";
+  } else if (cmd == "roll") {
+    auto const words = SplitWords(args);
+    if (words.size() != 4) {
+      std::cout << "usage: roll <old> <new> <close_price> <open_price>\n";
+    } else {
+      double close_price = 0.0;
+      double open_price = 0.0;
+      auto const c = std::from_chars(
+          words[2].data(), words[2].data() + words[2].size(), close_price);
+      auto const o = std::from_chars(
+          words[3].data(), words[3].data() + words[3].size(), open_price);
+      auto const master = td_gateway_.instruments();
+      auto const* old_inst = master != nullptr ? master->Find(words[0]) : nullptr;
+      auto const* new_inst = master != nullptr ? master->Find(words[1]) : nullptr;
+      if (c.ec != std::errc{} || o.ec != std::errc{}) {
+        std::cout << "bad prices\n";
+      } else if (old_inst == nullptr || new_inst == nullptr) {
+        std::cout << "unknown instrument\n";
+      } else {
+        int legs = 0;
+        for (auto const& pos : order_manager_.positions()) {
+          if (pos.instrument_id != words[0] || pos.total() == 0) {
+            continue;
+          }
+          // Close leg(s): SHFE/INE split today/yd, others plain close
+          bool const split = old_inst->exchange_id == "SHFE" ||
+                             old_inst->exchange_id == "INE";
+          td::OrderRequest close{};
+          close.direction = pos.side == td::Direction::kBuy
+                                ? td::Direction::kSell
+                                : td::Direction::kBuy;
+          close.limit_price = close_price;
+          base::CopyToFixedArray(close.instrument_id, old_inst->instrument_id);
+          base::CopyToFixedArray(close.exchange_id, old_inst->exchange_id);
+          if (split && pos.today_volume > 0) {
+            close.offset = td::Offset::kCloseToday;
+            close.volume = pos.today_volume;
+            risk_sink_.InsertOrder(close);
+            ++legs;
+          }
+          if (pos.yd_volume > 0) {
+            close.offset =
+                split ? td::Offset::kCloseYesterday : td::Offset::kClose;
+            close.volume = pos.yd_volume;
+            risk_sink_.InsertOrder(close);
+            ++legs;
+          }
+          // Open leg on the new contract, same side and volume
+          td::OrderRequest open{};
+          open.direction = pos.side;
+          open.offset = td::Offset::kOpen;
+          open.limit_price = open_price;
+          open.volume = pos.total();
+          base::CopyToFixedArray(open.instrument_id, new_inst->instrument_id);
+          base::CopyToFixedArray(open.exchange_id, new_inst->exchange_id);
+          risk_sink_.InsertOrder(open);
+          ++legs;
+        }
+        std::cout << (legs > 0 ? "roll submitted, " + std::to_string(legs) +
+                                     " legs\n"
+                               : "no position on " + std::string(words[0]) +
+                                     "\n");
+      }
+    }
   } else if (cmd == "strategy") {
     if (strategy_ == nullptr) {
       std::cout << "no strategy configured (--strategy-instrument)\n";
