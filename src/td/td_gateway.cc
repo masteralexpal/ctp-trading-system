@@ -1,0 +1,92 @@
+/**
+ * @file td_gateway.cc
+ * @author lipingan (lipingan.dev@outlook.com)
+ * @brief Trading gateway: CTP TraderApi lifecycle, order insert/cancel.
+ */
+#include "td/td_gateway.h"
+
+#include <utility>
+
+#include "td/detail/td_api_ops.h"
+#include "td/detail/td_spi_adapter.h"
+
+namespace cts::td {
+
+TdGateway::TdGateway() = default;
+
+TdGateway::~TdGateway() {
+  Disconnect();
+}
+
+void TdGateway::Connect(TdGatewayConfig config, TdDelegate& delegate) {
+  auto ops = std::make_unique<detail::CtpTdApiOps>(config.flow_dir);
+  Connect(std::move(config), delegate, std::move(ops));
+}
+
+void TdGateway::Connect(TdGatewayConfig config,
+                        TdDelegate& delegate,
+                        std::unique_ptr<detail::TdApiOps> ops) {
+  if (api_ != nullptr) {
+    return;
+  }
+  std::string front = config.front;
+  spi_ = new detail::TdSpiAdapter(ops.get(), std::move(config), delegate);
+  api_ = ops.release();
+  api_->RegisterSpi(spi_);
+  // QUICK resume: private/public streams restart empty after reconnect
+  api_->SubscribePrivateTopic(2);  // THOST_TERT_QUICK
+  api_->SubscribePublicTopic(2);
+  api_->RegisterFront(front.data());  // CTP copies the string internally
+  api_->Init();
+}
+
+std::string TdGateway::InsertOrder(OrderRequest const& req) {
+  if (api_ == nullptr) {
+    return {};
+  }
+  return static_cast<detail::TdSpiAdapter*>(spi_)->InsertOrder(req);
+}
+
+int TdGateway::CancelOrder(std::string_view order_ref) {
+  if (api_ == nullptr) {
+    return -1;
+  }
+  return static_cast<detail::TdSpiAdapter*>(spi_)->CancelOrder(order_ref);
+}
+
+int TdGateway::QueryInstruments() {
+  if (api_ == nullptr) {
+    return -1;
+  }
+  return static_cast<detail::TdSpiAdapter*>(spi_)->QueryInstruments();
+}
+
+std::shared_ptr<instrument::InstrumentMaster const> TdGateway::instruments()
+    const {
+  if (api_ == nullptr) {
+    return nullptr;
+  }
+  return static_cast<detail::TdSpiAdapter*>(spi_)->instruments();
+}
+
+bool TdGateway::ready() const {
+  if (api_ == nullptr) {
+    return false;
+  }
+  return static_cast<detail::TdSpiAdapter*>(spi_)->ready();
+}
+
+void TdGateway::Disconnect() {
+  if (api_ == nullptr) {
+    return;
+  }
+  api_->RegisterSpi(nullptr);
+  api_->Release();  // production impl blocks until internal threads exit
+  delete api_;
+  api_ = nullptr;
+  // CThostFtdcTraderSpi has no virtual dtor; delete with the exact type
+  delete static_cast<detail::TdSpiAdapter*>(spi_);
+  spi_ = nullptr;
+}
+
+}  // namespace cts::td
