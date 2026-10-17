@@ -31,6 +31,10 @@ OrderReport OrderReportFromCtp(CThostFtdcOrderField const& f);
 OrderReport RejectedOrderFromCtp(CThostFtdcInputOrderField const& f);
 TradeReport TradeReportFromCtp(CThostFtdcTradeField const& f);
 
+// One CTP row carries one bucket only (PositionDate); false = skipped (Net)
+bool PositionRowFromCtp(CThostFtdcInvestorPositionField const& f,
+                        PositionRow& row);
+
 }  // namespace cts::td::detail
 
 #endif  // CTS_TD_DETAIL_ORDER_CTP_H_

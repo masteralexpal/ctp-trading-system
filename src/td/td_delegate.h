@@ -8,7 +8,9 @@
 #ifndef CTS_TD_TD_DELEGATE_H_
 #define CTS_TD_TD_DELEGATE_H_
 
+#include <memory>
 #include <string_view>
+#include <vector>
 
 #include "td/order.h"
 
@@ -25,6 +27,10 @@ class TdDelegate {
   virtual void OnTdReady(bool /*success*/, std::string_view /*msg*/) {}
   virtual void OnTdOrder(OrderReport const& /*order*/) {}
   virtual void OnTdTrade(TradeReport const& /*trade*/) {}
+  // Broker position snapshot answer (reconciliation input); fired once per
+  // QueryPositions, never spontaneously
+  virtual void OnTdPositions(
+      std::shared_ptr<std::vector<PositionRow> const> /*rows*/) {}
   virtual void OnTdError(int /*error_id*/, std::string_view /*msg*/) {}
 };
 

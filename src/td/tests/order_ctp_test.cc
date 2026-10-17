@@ -86,5 +86,38 @@ TEST(OrderCtpTest, TradeTimeFoldsToEpochMs) {
   EXPECT_EQ(TradeReportFromCtp(f).epoch_ms, 0);
 }
 
+TEST(OrderCtpTest, TradeCarriesTradingDay) {
+  CThostFtdcTradeField f{};
+  std::strcpy(f.TradeDate, "20261016");
+  std::strcpy(f.TradeTime, "21:35:00");
+  std::strcpy(f.TradingDay, "20261017");  // night session -> next business day
+  auto const r = TradeReportFromCtp(f);
+  EXPECT_STREQ(r.trading_day, "20261017");
+}
+
+TEST(OrderCtpTest, PositionRowFoldsPositionDateIntoBuckets) {
+  CThostFtdcInvestorPositionField f{};
+  std::strcpy(f.InstrumentID, "rb2701");
+  std::strcpy(f.ExchangeID, "SHFE");
+  f.PosiDirection = THOST_FTDC_PD_Short;
+  f.PositionDate = THOST_FTDC_PSD_Today;
+  f.Position = 3;
+  PositionRow row;
+  ASSERT_TRUE(PositionRowFromCtp(f, row));
+  EXPECT_EQ(row.direction, Direction::kSell);
+  EXPECT_EQ(row.today_volume, 3);
+  EXPECT_EQ(row.yd_volume, 0);
+
+  f.PositionDate = THOST_FTDC_PSD_History;
+  f.YdPosition = 2;
+  f.Position = 2;
+  ASSERT_TRUE(PositionRowFromCtp(f, row));
+  EXPECT_EQ(row.yd_volume, 2);
+  EXPECT_EQ(row.today_volume, 0);
+
+  f.PosiDirection = THOST_FTDC_PD_Net;  // not a two-sided futures position
+  EXPECT_FALSE(PositionRowFromCtp(f, row));
+}
+
 }  // namespace
 }  // namespace cts::td::detail

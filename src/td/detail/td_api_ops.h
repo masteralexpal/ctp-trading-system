@@ -47,6 +47,10 @@ class TdApiOps {
   // OnRspQryInstrument (throttled by CTP to ~1 query/sec)
   virtual int ReqQryInstrument(CThostFtdcQryInstrumentField* req,
                                int request_id) = 0;
+  // Broker position snapshot; answered in batches via
+  // OnRspQryInvestorPosition (same throttle)
+  virtual int ReqQryInvestorPosition(CThostFtdcQryInvestorPositionField* req,
+                                     int request_id) = 0;
 };
 
 // Production impl: owns the real CThostFtdcTraderApi.
@@ -90,6 +94,10 @@ class CtpTdApiOps final : public TdApiOps {
   int ReqQryInstrument(CThostFtdcQryInstrumentField* req,
                        int request_id) override {
     return api_->ReqQryInstrument(req, request_id);
+  }
+  int ReqQryInvestorPosition(CThostFtdcQryInvestorPositionField* req,
+                             int request_id) override {
+    return api_->ReqQryInvestorPosition(req, request_id);
   }
 
  private:

@@ -6,6 +6,7 @@
 #include "td/detail/td_spi_adapter.h"
 
 #include <pthread.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <utility>
@@ -196,6 +197,54 @@ int TdSpiAdapter::QueryInstruments() {
   // Empty InstrumentID = whole market
   CThostFtdcQryInstrumentField req{};
   return api_->ReqQryInstrument(&req, request_id_.fetch_add(1) + 1);
+}
+
+int TdSpiAdapter::QueryPositions() {
+  if (!ready_.load(std::memory_order_acquire)) {
+    return -1;
+  }
+  // Empty InstrumentID = all positions
+  CThostFtdcQryInvestorPositionField req{};
+  base::CopyToFixedArray(req.BrokerID, config_.broker_id);
+  base::CopyToFixedArray(req.InvestorID, config_.investor_id);
+  return api_->ReqQryInvestorPosition(&req, request_id_.fetch_add(1) + 1);
+}
+
+void TdSpiAdapter::OnRspQryInvestorPosition(
+    CThostFtdcInvestorPositionField* position,
+    CThostFtdcRspInfoField* info,
+    int /*request_id*/,
+    bool is_last) {
+  if (info != nullptr && info->ErrorID != 0) {
+    delegate_.OnTdError(info->ErrorID, base::GbkToUtf8(info->ErrorMsg));
+    return;
+  }
+  if (position != nullptr) {
+    PositionRow row;
+    if (PositionRowFromCtp(*position, row) &&
+        (row.yd_volume > 0 || row.today_volume > 0)) {
+      // Merge into the pending row of the same (instrument, side)
+      auto it = std::find_if(pending_positions_.begin(),
+                             pending_positions_.end(),
+                             [&](PositionRow const& p) {
+                               return p.direction == row.direction &&
+                                      std::string_view(p.instrument_id) ==
+                                          row.instrument_id;
+                             });
+      if (it == pending_positions_.end()) {
+        pending_positions_.push_back(row);
+      } else {
+        it->yd_volume += row.yd_volume;
+        it->today_volume += row.today_volume;
+      }
+    }
+  }
+  if (is_last) {
+    delegate_.OnTdPositions(
+        std::make_shared<std::vector<PositionRow> const>(
+            std::move(pending_positions_)));
+    pending_positions_.clear();
+  }
 }
 
 void TdSpiAdapter::OnRspQryInstrument(CThostFtdcInstrumentField* instrument,

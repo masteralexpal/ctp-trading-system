@@ -78,6 +78,16 @@ void ConsoleTdClient::OnTdTrade(TradeReport const& trade) {
               trade.volume, trade.price, trade.order_ref, trade.trade_id);
 }
 
+void ConsoleTdClient::OnTdPositions(
+    std::shared_ptr<std::vector<PositionRow> const> rows) {
+  for (auto const& row : *rows) {
+    SPDLOG_INFO("position: {} {} today={} yd={}", row.instrument_id,
+                DirectionName(row.direction), row.today_volume,
+                row.yd_volume);
+  }
+  SPDLOG_INFO("positions snapshot: {} rows", rows->size());
+}
+
 void ConsoleTdClient::OnTdError(int error_id, std::string_view msg) {
   SPDLOG_ERROR("td: error {} {}", error_id, msg);
 }

@@ -35,6 +35,8 @@ class FakeTdApiOps final : public detail::TdApiOps {
   std::vector<CThostFtdcInputOrderField> insert_reqs;
   std::vector<CThostFtdcInputOrderActionField> action_reqs;
   int qry_instrument_calls = 0;
+  int qry_position_calls = 0;
+  CThostFtdcQryInvestorPositionField qry_position_req{};
 
   void RegisterSpi(CThostFtdcTraderSpi* s) override {
     calls.emplace_back("RegisterSpi");
@@ -76,6 +78,12 @@ class FakeTdApiOps final : public detail::TdApiOps {
     ++qry_instrument_calls;
     return 0;
   }
+  int ReqQryInvestorPosition(CThostFtdcQryInvestorPositionField* req,
+                             int /*id*/) override {
+    ++qry_position_calls;
+    qry_position_req = *req;
+    return 0;
+  }
 };
 
 struct RecordingDelegate : TdDelegate {
@@ -96,6 +104,16 @@ struct RecordingDelegate : TdDelegate {
   void OnTdTrade(TradeReport const& trade) override {
     events.emplace_back(std::string("trade:") + trade.instrument_id + ":" +
                         std::to_string(trade.volume));
+  }
+  void OnTdPositions(
+      std::shared_ptr<std::vector<PositionRow> const> rows) override {
+    for (auto const& row : *rows) {
+      events.emplace_back(std::string("position:") + row.instrument_id +
+                          ":" +
+                          std::to_string(static_cast<int>(row.direction)) +
+                          ":" + std::to_string(row.yd_volume) + ":" +
+                          std::to_string(row.today_volume));
+    }
   }
   void OnTdError(int error_id, std::string_view msg) override {
     events.emplace_back("error:" + std::to_string(error_id) + ":" +
@@ -339,6 +357,41 @@ TEST_F(TdGatewayTest, DisconnectIsIdempotentAndOrdered) {
   EXPECT_EQ(calls[before + 1], "Release");
   gateway.Disconnect();  // no-op
   EXPECT_EQ(calls.size(), before + 2);
+}
+
+TEST_F(TdGatewayTest, QueryPositionsMergesPositionDateRows) {
+  Connect();
+  ReadyUp();
+  EXPECT_EQ(gateway.QueryPositions(), 0);
+  EXPECT_EQ(fake->qry_position_calls, 1);
+  EXPECT_STREQ(fake->qry_position_req.InvestorID, "276491");
+
+  // CTP splits one position into a History row and a Today row (and fires a
+  // trailing nullptr row at is_last)
+  CThostFtdcInvestorPositionField row{};
+  std::strncpy(row.InstrumentID, "rb2701", sizeof(row.InstrumentID) - 1);
+  std::strncpy(row.ExchangeID, "SHFE", sizeof(row.ExchangeID) - 1);
+  row.PosiDirection = THOST_FTDC_PD_Long;
+  row.PositionDate = THOST_FTDC_PSD_History;
+  row.YdPosition = 2;
+  row.Position = 2;
+  fake->spi->OnRspQryInvestorPosition(&row, nullptr, 1, false);
+  row.PositionDate = THOST_FTDC_PSD_Today;
+  row.YdPosition = 0;
+  row.Position = 1;
+  fake->spi->OnRspQryInvestorPosition(&row, nullptr, 1, false);
+  fake->spi->OnRspQryInvestorPosition(nullptr, nullptr, 1, true);
+
+  ASSERT_EQ(delegate.events.size(), 3);  // connected, ready, one merged row
+  EXPECT_EQ(delegate.events[2],
+            "position:rb2701:" +
+                std::to_string(static_cast<int>(Direction::kBuy)) + ":2:1");
+}
+
+TEST_F(TdGatewayTest, QueryPositionsRejectedBeforeReady) {
+  Connect();
+  EXPECT_EQ(gateway.QueryPositions(), -1);
+  EXPECT_EQ(fake->qry_position_calls, 0);
 }
 
 }  // namespace

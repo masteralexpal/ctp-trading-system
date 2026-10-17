@@ -53,6 +53,11 @@ class Strategy : public md::MdClient, public td::TdClient {
   void OnTdReady(bool /*success*/, std::string_view /*msg*/) override {}
   void OnTdOrder(td::OrderReport const& /*order*/) override {}
   void OnTdTrade(td::TradeReport const& /*trade*/) override {}
+  // Strategies track their own fills; the broker position snapshot is the
+  // OMS's reconciliation input, not the strategy's
+  void OnTdPositions(
+      std::shared_ptr<std::vector<td::PositionRow> const> /*rows*/) override {
+  }
   void OnTdError(int /*error_id*/, std::string_view /*msg*/) override {}
 
  private:

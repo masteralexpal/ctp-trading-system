@@ -63,6 +63,10 @@ class TdGateway : public OrderSink {
   // Latest instrument snapshot; nullptr until the first query completes
   std::shared_ptr<instrument::InstrumentMaster const> instruments() const;
 
+  // Any thread. The answer arrives once as TdDelegate::OnTdPositions
+  // (reconciliation input for the OMS)
+  int QueryPositions();
+
   // Startup chain finished (auth + login + settlement confirm)
   bool ready() const;
 

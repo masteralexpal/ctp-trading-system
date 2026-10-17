@@ -82,6 +82,13 @@ class TdDispatcher final : public TdDelegate {
     e.trade = trade;
     Push(std::move(e));
   }
+  void OnTdPositions(
+      std::shared_ptr<std::vector<PositionRow> const> rows) override {
+    detail::TdEvent e;
+    e.kind = detail::TdEvent::Kind::kPositions;
+    e.positions = std::move(rows);
+    Push(std::move(e));
+  }
   void OnTdError(int error_id, std::string_view msg) override {
     detail::TdEvent e;
     e.kind = detail::TdEvent::Kind::kError;

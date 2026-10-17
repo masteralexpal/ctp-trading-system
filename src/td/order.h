@@ -76,6 +76,7 @@ struct TradeReport {
   char exchange_id[9];
   char order_ref[13];
   char trade_id[21];
+  char trading_day[9];  // business day; a change vs the ledger rolls buckets
   Direction direction;
   Offset offset;
   double price;
@@ -83,9 +84,20 @@ struct TradeReport {
   std::int64_t epoch_ms;  // exchange trade time folded to epoch ms; 0 if absent
 };
 
+// One row of the broker position snapshot, normalized from
+// OnRspQryInvestorPosition; PositionDate is already folded into the buckets
+struct PositionRow {
+  char instrument_id[31];
+  char exchange_id[9];
+  Direction direction;  // position side: kBuy = long, kSell = short
+  std::int32_t yd_volume;
+  std::int32_t today_volume;
+};
+
 static_assert(std::is_trivially_copyable_v<OrderRequest>);
 static_assert(std::is_trivially_copyable_v<OrderReport>);
 static_assert(std::is_trivially_copyable_v<TradeReport>);
+static_assert(std::is_trivially_copyable_v<PositionRow>);
 
 }  // namespace cts::td
 

@@ -8,7 +8,9 @@
 #ifndef CTS_TD_TD_CLIENT_H_
 #define CTS_TD_TD_CLIENT_H_
 
+#include <memory>
 #include <string_view>
+#include <vector>
 
 #include "td/order.h"
 
@@ -31,6 +33,8 @@ class TdClient {
   virtual void OnTdReady(bool success, std::string_view msg) = 0;
   virtual void OnTdOrder(OrderReport const& order) = 0;
   virtual void OnTdTrade(TradeReport const& trade) = 0;
+  virtual void OnTdPositions(
+      std::shared_ptr<std::vector<PositionRow> const> rows) = 0;
   virtual void OnTdError(int error_id, std::string_view msg) = 0;
 };
 

@@ -51,6 +51,8 @@ class TdSpiAdapter final : public CThostFtdcTraderSpi {
   // Any thread; issues the whole-market instrument query (call once after
   // ready; CTP throttles queries to ~1/sec)
   int QueryInstruments();
+  // Any thread; the answer arrives once as OnTdPositions (same throttle)
+  int QueryPositions();
 
   bool ready() const { return ready_.load(std::memory_order_acquire); }
   // Latest built snapshot; nullptr until the first query completes.
@@ -89,6 +91,10 @@ class TdSpiAdapter final : public CThostFtdcTraderSpi {
                           CThostFtdcRspInfoField* info,
                           int request_id,
                           bool is_last) override;
+  void OnRspQryInvestorPosition(CThostFtdcInvestorPositionField* position,
+                                CThostFtdcRspInfoField* info,
+                                int request_id,
+                                bool is_last) override;
   void OnRtnOrder(CThostFtdcOrderField* order) override;
   void OnRtnTrade(CThostFtdcTradeField* trade) override;
   void OnErrRtnOrderInsert(CThostFtdcInputOrderField* req,
@@ -127,6 +133,10 @@ class TdSpiAdapter final : public CThostFtdcTraderSpi {
   // Instrument query accumulation (callback thread) + published snapshot
   std::vector<instrument::Instrument> pending_instruments_;
   std::atomic<std::shared_ptr<instrument::InstrumentMaster const>> instruments_;
+
+  // Position query accumulation (callback thread): rows merged by
+  // (instrument, side), PositionDate folded into today/yd buckets
+  std::vector<PositionRow> pending_positions_;
 };
 
 }  // namespace cts::td::detail

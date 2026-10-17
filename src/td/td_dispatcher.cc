@@ -65,6 +65,9 @@ void TdDispatcher::Dispatch(detail::TdEvent const& event) {
       case detail::TdEvent::Kind::kTrade:
         client->OnTdTrade(event.trade);
         break;
+      case detail::TdEvent::Kind::kPositions:
+        client->OnTdPositions(event.positions);
+        break;
       case detail::TdEvent::Kind::kError:
         client->OnTdError(event.code, event.msg);
         break;

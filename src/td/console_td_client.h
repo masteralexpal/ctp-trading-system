@@ -20,6 +20,8 @@ class ConsoleTdClient final : public TdClient {
   void OnTdReady(bool success, std::string_view msg) override;
   void OnTdOrder(OrderReport const& order) override;
   void OnTdTrade(TradeReport const& trade) override;
+  void OnTdPositions(
+      std::shared_ptr<std::vector<PositionRow> const> rows) override;
   void OnTdError(int error_id, std::string_view msg) override;
 };
 

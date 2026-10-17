@@ -132,12 +132,34 @@ TradeReport TradeReportFromCtp(CThostFtdcTradeField const& f) {
   base::CopyToFixedArray(r.exchange_id, f.ExchangeID);
   base::CopyToFixedArray(r.order_ref, f.OrderRef);
   base::CopyToFixedArray(r.trade_id, f.TradeID);
+  base::CopyToFixedArray(r.trading_day, f.TradingDay);
   r.direction = DirectionFromCtp(f.Direction);
   r.offset = OffsetFromCtp(f.OffsetFlag);
   r.price = f.Price;
   r.volume = f.Volume;
   r.epoch_ms = base::LocalDateTimeToEpochMs(f.TradeDate, f.TradeTime, 0);
   return r;
+}
+
+// One CTP row carries only one bucket (PositionDate); the caller merges rows
+// of the same (instrument, side) by adding buckets. false = row skipped
+// (Net side: not a two-sided futures position)
+bool PositionRowFromCtp(CThostFtdcInvestorPositionField const& f,
+                        PositionRow& row) {
+  if (f.PosiDirection == THOST_FTDC_PD_Net) {
+    return false;
+  }
+  row = {};
+  base::CopyToFixedArray(row.instrument_id, f.InstrumentID);
+  base::CopyToFixedArray(row.exchange_id, f.ExchangeID);
+  row.direction = f.PosiDirection == THOST_FTDC_PD_Long ? Direction::kBuy
+                                                        : Direction::kSell;
+  if (f.PositionDate == THOST_FTDC_PSD_Today) {
+    row.today_volume = f.Position;
+  } else {
+    row.yd_volume = f.YdPosition > 0 ? f.YdPosition : f.Position;
+  }
+  return true;
 }
 
 }  // namespace cts::td::detail
