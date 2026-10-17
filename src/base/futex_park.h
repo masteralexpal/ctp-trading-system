@@ -17,8 +17,9 @@
 
 namespace cts::base {
 
-// Park/notify for a single consumer loop (MdDispatcher, TdDispatcher,
-// RawTickRecorder all use this): zero-CPU idle without lost wakeups.
+// Park/notify for a single consumer loop (MdDispatcher and RawTickRecorder
+// use this): zero-CPU idle without lost wakeups. The td dispatcher does NOT:
+// its events are low-rate, so it runs on a TaskLoop instead.
 //
 // Consumer: loop { drain work; park.WaitUnless(work_pending); }
 // Producer: make work visible, then park.Notify() -- ALWAYS in this order.

@@ -111,7 +111,7 @@ void Console::Start() {
   eof_shutdown_ = S_ISFIFO(st.st_mode);
   // Nonblocking: OnReadable drains until EAGAIN
   fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL) | O_NONBLOCK);
-  std::cout << "console ready; 'help' for commands\n> " << std::flush;
+  std::cout << "console ready; 'help' for commands\n>>> " << std::flush;
   loop_.WatchFd(STDIN_FILENO, [this] { OnReadable(); });
 }
 
@@ -239,9 +239,12 @@ void Console::Execute(std::string_view line) {
     // Spaced ~1.3s for the CTP query throttle (~1 query/sec)
     loop_.PostDelayedTask([this] { td_gateway_.QueryAccount(); },
                           std::chrono::milliseconds{1300});
-    std::cout << (rc == 0 ? "position+account queries sent; answers arrive "
-                            "async\n"
-                          : "rejected (td not ready)\n");
+    if (rc == 0) {
+      std::cout << "position+account queries sent; answers arrive async\n";
+    } else {
+      // rc: -1 = not ready locally; negative = CTP rejected (throttle etc.)
+      std::cout << "rejected, rc=" << rc << "\n";
+    }
   } else if (cmd == "account") {
     auto const acc = order_manager_.account();
     if (!acc) {
@@ -397,7 +400,7 @@ void Console::Execute(std::string_view line) {
   } else {
     std::cout << "unknown command: " << cmd << " ('help' for list)\n";
   }
-  std::cout << "> " << std::flush;
+  std::cout << ">>> " << std::flush;
 }
 
 }  // namespace cts::app

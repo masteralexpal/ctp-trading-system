@@ -14,7 +14,12 @@
 namespace {
 
 std::atomic<bool> g_shutdown{false};
-std::atomic<cts::base::WaitableEvent*> g_wake_event{nullptr};
+
+// Wake-event registry: a fixed array of atomic slots (no container, no lock)
+// because the shutdown SIGNAL HANDLER walks it -- only bare atomic ops are
+// allowed there. Capacity 4: main loop + md/td dispatch loops + headroom
+constexpr std::size_t kMaxWakeEvents = 4;
+std::atomic<cts::base::WaitableEvent*> g_wake_events[kMaxWakeEvents] = {};
 
 void HandleShutdownSignal(int sig) {
   // A lock-free atomic exchange is signal-safe per the C++ standard. The old
@@ -24,8 +29,10 @@ void HandleShutdownSignal(int sig) {
     std::_Exit(128 + sig);
   }
   g_shutdown.notify_one();
-  if (auto* event = g_wake_event.load(std::memory_order_acquire)) {
-    event->Signal();
+  for (auto& slot : g_wake_events) {
+    if (auto* event = slot.load(std::memory_order_acquire)) {
+      event->Signal();
+    }
   }
 }
 
@@ -45,8 +52,10 @@ bool ShutdownRequested() {
 void RequestShutdown() {
   if (!g_shutdown.exchange(true, std::memory_order_acq_rel)) {
     g_shutdown.notify_one();
-    if (auto* event = g_wake_event.load(std::memory_order_acquire)) {
-      event->Signal();
+    for (auto& slot : g_wake_events) {
+      if (auto* event = slot.load(std::memory_order_acquire)) {
+        event->Signal();
+      }
     }
   }
 }
@@ -61,13 +70,25 @@ void WaitForShutdown() {
 }
 
 void RegisterShutdownWakeEvent(WaitableEvent* event) {
-  g_wake_event.store(event, std::memory_order_release);
+  for (auto& slot : g_wake_events) {
+    WaitableEvent* expected = nullptr;
+    if (slot.compare_exchange_strong(expected, event,
+                                     std::memory_order_acq_rel)) {
+      return;
+    }
+  }
+  // No free slot: more loops than kMaxWakeEvents -- programming error, but
+  // shutdown correctness is preserved for the registered ones
 }
 
 void UnregisterShutdownWakeEvent(WaitableEvent* event) {
-  WaitableEvent* expected = event;
-  g_wake_event.compare_exchange_strong(expected, nullptr,
-                                       std::memory_order_acq_rel);
+  for (auto& slot : g_wake_events) {
+    WaitableEvent* expected = event;
+    if (slot.compare_exchange_strong(expected, nullptr,
+                                     std::memory_order_acq_rel)) {
+      return;
+    }
+  }
 }
 
 }  // namespace cts::base

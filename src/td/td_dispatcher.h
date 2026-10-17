@@ -1,7 +1,7 @@
 /**
  * @file td_dispatcher.h
  * @author lipingan (lipingan.dev@outlook.com)
- * @brief Standard TdDelegate: box-and-enqueue, fan out on a worker thread.
+ * @brief Standard TdDelegate: box-and-post, fan out on a task loop.
  */
 #pragma once
 
@@ -9,21 +9,24 @@
 #define CTS_TD_TD_DISPATCHER_H_
 
 #include <atomic>
-#include <cstddef>
 #include <utility>
 #include <vector>
 
-#include "base/futex_park.h"
-#include "base/spsc_queue.h"
+#include "base/task/task_loop.h"
 #include "td/detail/td_event.h"
 #include "td/td_client.h"
 #include "td/td_delegate.h"
 
 namespace cts::td {
 
-// Standard TdDelegate: on the CTP callback thread it only boxes and enqueues;
-// the consumer loop Run() is placed on a dedicated thread by the assembler
-// (this class spawns nothing).
+// Standard TdDelegate: on the CTP callback thread it only boxes and posts a
+// task; the fan-out runs on the dispatcher's own TaskLoop, placed on a
+// dedicated thread by the assembler (this class spawns nothing).
+//
+// Task-centric: td events are LOW rate (reports + query answers), so the
+// TaskLoop buys timers (PostDelayedTask) for free -- query throttling and
+// reconnect backoff live here, not on the main loop. The md dispatcher keeps
+// its SPSC+futex design: tick rate justifies zero-allocation POD queues.
 //
 // Assembly order: AddClient* -> base::Thread.Start([&]{ d.Run(); }) ->
 // TdGateway::Connect -> ... -> TdGateway::Disconnect ->
@@ -39,14 +42,14 @@ class TdDispatcher final : public TdDelegate {
   // Call only before Run
   void AddClient(TdClient& client) { clients_.push_back(&client); }
 
-  // Consumer loop: parks on a futex when empty (zero CPU); runs on the
-  // caller's thread until RequestStop and drained
-  void Run();
-  // Idempotent, any thread; wakes the parked loop; Run drains then returns
-  void RequestStop();
+  // Consumer loop: runs on the caller's thread until RequestStop
+  void Run() { loop_.Run(); }
+  // Idempotent, any thread; Run drains remaining tasks then returns
+  void RequestStop() { loop_.Stop(); }
 
-  // Total events dropped on queue overflow (backpressure metric)
-  std::size_t dropped_events() const { return queue_.dropped(); }
+  // The dispatcher's task loop: query throttling and reconnect timers post
+  // their delayed tasks here (any-thread safe)
+  base::TaskLoop& loop() { return loop_; }
 
   // Readiness (dispatch-thread written, readable from any thread)
   bool ready() const { return ready_.load(std::memory_order_acquire); }
@@ -107,11 +110,9 @@ class TdDispatcher final : public TdDelegate {
   void Push(detail::TdEvent event);
   void Dispatch(detail::TdEvent const& event);
 
-  base::SpscQueue<detail::TdEvent, 4096> queue_;
+  base::TaskLoop loop_;
   std::vector<TdClient*> clients_;
-  std::atomic<bool> stop_requested_{false};
   std::atomic<bool> ready_{false};  // dispatch-thread written
-  base::FutexPark park_;
 };
 
 }  // namespace cts::td

@@ -27,9 +27,10 @@ bool ShutdownRequested();
 // Parks until ShutdownRequested (futex wait; zero CPU, wakes instantly)
 void WaitForShutdown();
 
-// Registers the event the signal handler will Signal() in addition to the
-// flag (the main TaskLoop parks on it via epoll). One active registration;
-// Run/Stop of the loop own the register/unregister pairing
+// Registers an event the signal handler will Signal() in addition to the
+// flag (each TaskLoop parks on its own via epoll). Fixed small capacity
+// (4 slots, fixed array = signal-safe); Run/Stop of a loop own the
+// register/unregister pairing
 void RegisterShutdownWakeEvent(WaitableEvent* event);
 void UnregisterShutdownWakeEvent(WaitableEvent* event);
 
