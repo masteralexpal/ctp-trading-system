@@ -58,6 +58,7 @@ class Strategy : public md::MdClient, public td::TdClient {
   void OnTdPositions(
       std::shared_ptr<std::vector<td::PositionRow> const> /*rows*/) override {
   }
+  void OnTdAccount(td::AccountReport const& /*account*/) override {}
   void OnTdError(int /*error_id*/, std::string_view /*msg*/) override {}
 
  private:

@@ -83,6 +83,16 @@ void OrderManager::OnTdPositions(
   }
 }
 
+void OrderManager::OnTdAccount(td::AccountReport const& account) {
+  std::lock_guard lock(mutex_);
+  account_ = account;
+}
+
+std::optional<td::AccountReport> OrderManager::account() const {
+  std::lock_guard lock(mutex_);
+  return account_;
+}
+
 std::vector<OrderEntry> OrderManager::orders() const {
   std::lock_guard lock(mutex_);
   std::vector<OrderEntry> out;

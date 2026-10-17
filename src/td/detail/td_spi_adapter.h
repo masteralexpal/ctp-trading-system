@@ -53,6 +53,8 @@ class TdSpiAdapter final : public CThostFtdcTraderSpi {
   int QueryInstruments();
   // Any thread; the answer arrives once as OnTdPositions (same throttle)
   int QueryPositions();
+  // Any thread; the answer arrives once as OnTdAccount (same throttle)
+  int QueryAccount();
 
   bool ready() const { return ready_.load(std::memory_order_acquire); }
   // Latest built snapshot; nullptr until the first query completes.
@@ -95,6 +97,10 @@ class TdSpiAdapter final : public CThostFtdcTraderSpi {
                                 CThostFtdcRspInfoField* info,
                                 int request_id,
                                 bool is_last) override;
+  void OnRspQryTradingAccount(CThostFtdcTradingAccountField* account,
+                              CThostFtdcRspInfoField* info,
+                              int request_id,
+                              bool is_last) override;
   void OnRtnOrder(CThostFtdcOrderField* order) override;
   void OnRtnTrade(CThostFtdcTradeField* trade) override;
   void OnErrRtnOrderInsert(CThostFtdcInputOrderField* req,

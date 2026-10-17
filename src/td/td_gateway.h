@@ -66,6 +66,8 @@ class TdGateway : public OrderSink {
   // Any thread. The answer arrives once as TdDelegate::OnTdPositions
   // (reconciliation input for the OMS)
   int QueryPositions();
+  // Any thread. The answer arrives once as TdDelegate::OnTdAccount
+  int QueryAccount();
 
   // Startup chain finished (auth + login + settlement confirm)
   bool ready() const;

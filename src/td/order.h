@@ -94,10 +94,21 @@ struct PositionRow {
   std::int32_t today_volume;
 };
 
+// Account snapshot, normalized from OnRspQryTradingAccount
+struct AccountReport {
+  double balance;         // 权益
+  double available;       // 可用
+  double margin;          // 占用保证金
+  double frozen_margin;   // 冻结保证金
+  double close_profit;    // 平仓盈亏
+  double position_profit; // 持仓盈亏
+};
+
 static_assert(std::is_trivially_copyable_v<OrderRequest>);
 static_assert(std::is_trivially_copyable_v<OrderReport>);
 static_assert(std::is_trivially_copyable_v<TradeReport>);
 static_assert(std::is_trivially_copyable_v<PositionRow>);
+static_assert(std::is_trivially_copyable_v<AccountReport>);
 
 }  // namespace cts::td
 

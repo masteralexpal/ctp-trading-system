@@ -31,6 +31,8 @@ class TdDelegate {
   // QueryPositions, never spontaneously
   virtual void OnTdPositions(
       std::shared_ptr<std::vector<PositionRow> const> /*rows*/) {}
+  // Account snapshot answer; fired once per QueryAccount
+  virtual void OnTdAccount(AccountReport const& /*account*/) {}
   virtual void OnTdError(int /*error_id*/, std::string_view /*msg*/) {}
 };
 

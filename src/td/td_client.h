@@ -35,6 +35,7 @@ class TdClient {
   virtual void OnTdTrade(TradeReport const& trade) = 0;
   virtual void OnTdPositions(
       std::shared_ptr<std::vector<PositionRow> const> rows) = 0;
+  virtual void OnTdAccount(AccountReport const& account) = 0;
   virtual void OnTdError(int error_id, std::string_view msg) = 0;
 };
 

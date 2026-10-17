@@ -88,6 +88,14 @@ void ConsoleTdClient::OnTdPositions(
   SPDLOG_INFO("positions snapshot: {} rows", rows->size());
 }
 
+void ConsoleTdClient::OnTdAccount(AccountReport const& account) {
+  SPDLOG_INFO("account: balance={} available={} margin={} frozen={} "
+              "close_pnl={} pos_pnl={}",
+              account.balance, account.available, account.margin,
+              account.frozen_margin, account.close_profit,
+              account.position_profit);
+}
+
 void ConsoleTdClient::OnTdError(int error_id, std::string_view msg) {
   SPDLOG_ERROR("td: error {} {}", error_id, msg);
 }

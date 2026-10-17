@@ -26,6 +26,7 @@ struct TdEvent {
     kOrder,
     kTrade,
     kPositions,
+    kAccount,
     kError,
   };
   Kind kind;
@@ -36,6 +37,7 @@ struct TdEvent {
   std::string msg;      // kReady / kError (UTF-8)
   // kPositions only: broker position snapshot (reconciliation input)
   std::shared_ptr<std::vector<PositionRow> const> positions;
+  AccountReport account{};  // kAccount only
 };
 
 }  // namespace cts::td::detail

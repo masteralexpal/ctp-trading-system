@@ -89,6 +89,12 @@ class TdDispatcher final : public TdDelegate {
     e.positions = std::move(rows);
     Push(std::move(e));
   }
+  void OnTdAccount(AccountReport const& account) override {
+    detail::TdEvent e;
+    e.kind = detail::TdEvent::Kind::kAccount;
+    e.account = account;
+    Push(std::move(e));
+  }
   void OnTdError(int error_id, std::string_view msg) override {
     detail::TdEvent e;
     e.kind = detail::TdEvent::Kind::kError;

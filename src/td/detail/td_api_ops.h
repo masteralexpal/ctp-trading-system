@@ -51,6 +51,9 @@ class TdApiOps {
   // OnRspQryInvestorPosition (same throttle)
   virtual int ReqQryInvestorPosition(CThostFtdcQryInvestorPositionField* req,
                                      int request_id) = 0;
+  // Account snapshot; answered once via OnRspQryTradingAccount
+  virtual int ReqQryTradingAccount(CThostFtdcQryTradingAccountField* req,
+                                   int request_id) = 0;
 };
 
 // Production impl: owns the real CThostFtdcTraderApi.
@@ -98,6 +101,10 @@ class CtpTdApiOps final : public TdApiOps {
   int ReqQryInvestorPosition(CThostFtdcQryInvestorPositionField* req,
                              int request_id) override {
     return api_->ReqQryInvestorPosition(req, request_id);
+  }
+  int ReqQryTradingAccount(CThostFtdcQryTradingAccountField* req,
+                           int request_id) override {
+    return api_->ReqQryTradingAccount(req, request_id);
   }
 
  private:

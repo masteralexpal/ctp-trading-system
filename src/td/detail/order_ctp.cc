@@ -162,4 +162,15 @@ bool PositionRowFromCtp(CThostFtdcInvestorPositionField const& f,
   return true;
 }
 
+AccountReport AccountReportFromCtp(CThostFtdcTradingAccountField const& f) {
+  AccountReport r{};
+  r.balance = f.Balance;
+  r.available = f.Available;
+  r.margin = f.CurrMargin;
+  r.frozen_margin = f.FrozenMargin;
+  r.close_profit = f.CloseProfit;
+  r.position_profit = f.PositionProfit;
+  return r;
+}
+
 }  // namespace cts::td::detail

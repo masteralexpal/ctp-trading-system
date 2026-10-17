@@ -119,5 +119,22 @@ TEST(OrderCtpTest, PositionRowFoldsPositionDateIntoBuckets) {
   EXPECT_FALSE(PositionRowFromCtp(f, row));
 }
 
+TEST(OrderCtpTest, AccountMapping) {
+  CThostFtdcTradingAccountField f{};
+  f.Balance = 100.0;
+  f.Available = 80.0;
+  f.CurrMargin = 15.0;
+  f.FrozenMargin = 5.0;
+  f.CloseProfit = 7.0;
+  f.PositionProfit = 3.0;
+  auto const r = AccountReportFromCtp(f);
+  EXPECT_DOUBLE_EQ(r.balance, 100.0);
+  EXPECT_DOUBLE_EQ(r.available, 80.0);
+  EXPECT_DOUBLE_EQ(r.margin, 15.0);
+  EXPECT_DOUBLE_EQ(r.frozen_margin, 5.0);
+  EXPECT_DOUBLE_EQ(r.close_profit, 7.0);
+  EXPECT_DOUBLE_EQ(r.position_profit, 3.0);
+}
+
 }  // namespace
 }  // namespace cts::td::detail

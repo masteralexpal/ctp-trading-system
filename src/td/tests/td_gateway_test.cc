@@ -37,6 +37,7 @@ class FakeTdApiOps final : public detail::TdApiOps {
   int qry_instrument_calls = 0;
   int qry_position_calls = 0;
   CThostFtdcQryInvestorPositionField qry_position_req{};
+  int qry_account_calls = 0;
 
   void RegisterSpi(CThostFtdcTraderSpi* s) override {
     calls.emplace_back("RegisterSpi");
@@ -84,6 +85,11 @@ class FakeTdApiOps final : public detail::TdApiOps {
     qry_position_req = *req;
     return 0;
   }
+  int ReqQryTradingAccount(CThostFtdcQryTradingAccountField* /*req*/,
+                           int /*id*/) override {
+    ++qry_account_calls;
+    return 0;
+  }
 };
 
 struct RecordingDelegate : TdDelegate {
@@ -104,6 +110,9 @@ struct RecordingDelegate : TdDelegate {
   void OnTdTrade(TradeReport const& trade) override {
     events.emplace_back(std::string("trade:") + trade.instrument_id + ":" +
                         std::to_string(trade.volume));
+  }
+  void OnTdAccount(AccountReport const& account) override {
+    events.emplace_back("account:" + std::to_string(account.balance));
   }
   void OnTdPositions(
       std::shared_ptr<std::vector<PositionRow> const> rows) override {
@@ -386,6 +395,21 @@ TEST_F(TdGatewayTest, QueryPositionsMergesPositionDateRows) {
   EXPECT_EQ(delegate.events[2],
             "position:rb2701:" +
                 std::to_string(static_cast<int>(Direction::kBuy)) + ":2:1");
+}
+
+TEST_F(TdGatewayTest, QueryAccountReturnsSnapshot) {
+  Connect();
+  ReadyUp();
+  EXPECT_EQ(gateway.QueryAccount(), 0);
+  EXPECT_EQ(fake->qry_account_calls, 1);
+
+  CThostFtdcTradingAccountField acc{};
+  acc.Balance = 1000000.0;
+  acc.Available = 980000.0;
+  fake->spi->OnRspQryTradingAccount(&acc, nullptr, 1, true);
+
+  ASSERT_FALSE(delegate.events.empty());
+  EXPECT_EQ(delegate.events.back(), "account:1000000.000000");
 }
 
 TEST_F(TdGatewayTest, QueryPositionsRejectedBeforeReady) {

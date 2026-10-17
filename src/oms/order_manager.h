@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -72,6 +73,7 @@ class OrderManager final : public td::TdClient {
   void OnTdTrade(td::TradeReport const& trade) override;
   void OnTdPositions(
       std::shared_ptr<std::vector<td::PositionRow> const> rows) override;
+  void OnTdAccount(td::AccountReport const& account) override;
   void OnTdError(int /*error_id*/, std::string_view /*msg*/) override {}
 
   // Any thread: snapshot copies
@@ -80,6 +82,8 @@ class OrderManager final : public td::TdClient {
   // The TradingDay the ledger currently buckets against; empty before the
   // first trade
   std::string trading_day() const;
+  // Latest account snapshot; nullopt before the first QueryAccount answer
+  std::optional<td::AccountReport> account() const;
 
  private:
   struct Key {
@@ -103,6 +107,7 @@ class OrderManager final : public td::TdClient {
   std::unordered_map<std::string, OrderEntry> journal_;
   std::unordered_map<Key, Position, KeyHash> ledger_;
   std::string current_day_;
+  std::optional<td::AccountReport> account_;
   std::atomic<std::shared_ptr<instrument::InstrumentMaster const>> master_;
 };
 

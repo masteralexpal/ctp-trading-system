@@ -210,6 +210,29 @@ int TdSpiAdapter::QueryPositions() {
   return api_->ReqQryInvestorPosition(&req, request_id_.fetch_add(1) + 1);
 }
 
+int TdSpiAdapter::QueryAccount() {
+  if (!ready_.load(std::memory_order_acquire)) {
+    return -1;
+  }
+  CThostFtdcQryTradingAccountField req{};
+  base::CopyToFixedArray(req.BrokerID, config_.broker_id);
+  base::CopyToFixedArray(req.InvestorID, config_.investor_id);
+  return api_->ReqQryTradingAccount(&req, request_id_.fetch_add(1) + 1);
+}
+
+void TdSpiAdapter::OnRspQryTradingAccount(CThostFtdcTradingAccountField* account,
+                                          CThostFtdcRspInfoField* info,
+                                          int /*request_id*/,
+                                          bool /*is_last*/) {
+  if (info != nullptr && info->ErrorID != 0) {
+    delegate_.OnTdError(info->ErrorID, base::GbkToUtf8(info->ErrorMsg));
+    return;
+  }
+  if (account != nullptr) {
+    delegate_.OnTdAccount(AccountReportFromCtp(*account));
+  }
+}
+
 void TdSpiAdapter::OnRspQryInvestorPosition(
     CThostFtdcInvestorPositionField* position,
     CThostFtdcRspInfoField* info,

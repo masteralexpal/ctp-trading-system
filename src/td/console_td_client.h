@@ -22,6 +22,7 @@ class ConsoleTdClient final : public TdClient {
   void OnTdTrade(TradeReport const& trade) override;
   void OnTdPositions(
       std::shared_ptr<std::vector<PositionRow> const> rows) override;
+  void OnTdAccount(AccountReport const& account) override;
   void OnTdError(int error_id, std::string_view msg) override;
 };
 

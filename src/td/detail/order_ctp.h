@@ -34,6 +34,7 @@ TradeReport TradeReportFromCtp(CThostFtdcTradeField const& f);
 // One CTP row carries one bucket only (PositionDate); false = skipped (Net)
 bool PositionRowFromCtp(CThostFtdcInvestorPositionField const& f,
                         PositionRow& row);
+AccountReport AccountReportFromCtp(CThostFtdcTradingAccountField const& f);
 
 }  // namespace cts::td::detail
 

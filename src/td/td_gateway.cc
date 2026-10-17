@@ -68,6 +68,13 @@ int TdGateway::QueryPositions() {
   return static_cast<detail::TdSpiAdapter*>(spi_)->QueryPositions();
 }
 
+int TdGateway::QueryAccount() {
+  if (api_ == nullptr) {
+    return -1;
+  }
+  return static_cast<detail::TdSpiAdapter*>(spi_)->QueryAccount();
+}
+
 std::shared_ptr<instrument::InstrumentMaster const> TdGateway::instruments()
     const {
   if (api_ == nullptr) {
