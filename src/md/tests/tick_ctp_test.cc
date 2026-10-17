@@ -5,6 +5,7 @@
  */
 #include "md/detail/tick_ctp.h"
 
+#include <cfloat>
 #include <cstdint>
 #include <cstring>
 
@@ -104,6 +105,34 @@ TEST(TickCtpTest, OverlongInstrumentIdIsTruncatedSafely) {
   f.InstrumentID[sizeof(f.InstrumentID) - 1] = '\0';
   Tick const tick = TickFromCtp(f);
   EXPECT_EQ(std::strlen(tick.instrument_id), sizeof(tick.instrument_id) - 1);
+}
+
+TEST(TickCtpTest, SessionStatsMapped) {
+  CThostFtdcDepthMarketDataField f = MakeField();
+  f.OpenPrice = 3101.0;
+  f.HighestPrice = 3130.0;
+  f.LowestPrice = 3095.0;
+  f.PreClosePrice = 3102.0;
+  Tick const tick = TickFromCtp(f);
+  EXPECT_DOUBLE_EQ(tick.open_price, 3101.0);
+  EXPECT_DOUBLE_EQ(tick.highest_price, 3130.0);
+  EXPECT_DOUBLE_EQ(tick.lowest_price, 3095.0);
+  EXPECT_DOUBLE_EQ(tick.pre_close_price, 3102.0);
+}
+
+TEST(TickCtpTest, DblMaxPlaceholdersFoldToZero) {
+  CThostFtdcDepthMarketDataField f = MakeField();
+  f.LastPrice = DBL_MAX;
+  f.HighestPrice = DBL_MAX;
+  f.AskPrice1 = DBL_MAX;  // empty ask side (limit-locked)
+  f.SettlementPrice = DBL_MAX;
+  Tick const tick = TickFromCtp(f);
+  EXPECT_DOUBLE_EQ(tick.last_price, 0.0);
+  EXPECT_DOUBLE_EQ(tick.highest_price, 0.0);
+  EXPECT_DOUBLE_EQ(tick.ask_price[0], 0.0);
+  EXPECT_DOUBLE_EQ(tick.settlement_price, 0.0);
+  // Valid fields untouched
+  EXPECT_DOUBLE_EQ(tick.bid_price[0], 3123.0);
 }
 
 }  // namespace

@@ -32,6 +32,10 @@ struct Tick {
   std::int64_t epoch_ms;
 
   double last_price;
+  double open_price;
+  double highest_price;
+  double lowest_price;
+  double pre_close_price;
   std::int64_t volume;  // cumulative volume of the day
   double turnover;      // cumulative turnover of the day
   double open_interest;
