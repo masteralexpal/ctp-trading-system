@@ -8,7 +8,7 @@ target_sources(
 
 target_link_libraries(
     oms
-    PUBLIC cts::config cts::base cts::instrument cts::td
+    PUBLIC cts::config cts::base cts::instrument cts::session cts::td
     PRIVATE third_party::spdlog
 )
 

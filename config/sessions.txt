@@ -1,0 +1,14 @@
+# Trading session templates: product HH:MM-HH:MM,...
+# Night sections crossing midnight are written as-is (21:00-02:30).
+# Products not listed fall back to DEFAULT.
+#
+# Copy to ~/.cts/sessions.txt (or pass --sessions-file).
+
+DEFAULT 09:00-10:15,10:30-11:30,13:30-15:00
+
+# SHFE
+rb 21:00-23:00,09:00-10:15,10:30-11:30,13:30-15:00
+hc 21:00-23:00,09:00-10:15,10:30-11:30,13:30-15:00
+au 21:00-02:30,09:00-10:15,10:30-11:30,13:30-15:00
+ag 21:00-02:30,09:00-10:15,10:30-11:30,13:30-15:00
+cu 21:00-01:00,09:00-10:15,10:30-11:30,13:30-15:00

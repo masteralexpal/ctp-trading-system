@@ -5,6 +5,7 @@
  */
 #include "oms/checked_order_sink.h"
 
+#include "base/time_utils.h"
 #include "oms/order_manager.h"
 
 #include <spdlog/spdlog.h>
@@ -37,6 +38,27 @@ std::string CheckedOrderSink::InsertOrder(td::OrderRequest const& req) {
   }
   if (req.volume <= 0) {
     return {};
+  }
+
+  // Trading-time guard: only when the session table, calendar and the
+  // product are all known -- unknown inputs skip the check, never block
+  if (auto const* sessions = sessions_.load(std::memory_order_acquire)) {
+    auto const* calendar = calendar_.load(std::memory_order_relaxed);
+    if (auto const master = master_.load(); calendar != nullptr && master) {
+      if (auto const* inst = master->Find(req.instrument_id)) {
+        if (auto const* t = sessions->Find(inst->product_id)) {
+          auto const dm = session::LocalDateAndMinute(base::NowEpochMs());
+          if (!session::IsTradingTime(*t, dm.second)) {
+            SPDLOG_WARN(
+                "risk: order rejected, {} is outside {} trading sections "
+                "(local {:04d}:{:02d})",
+                req.instrument_id, inst->product_id, dm.second / 60,
+                dm.second % 60);
+            return {};
+          }
+        }
+      }
+    }
   }
 
   if (limits_.max_position_per_instrument > 0 &&

@@ -51,6 +51,20 @@ std::unique_ptr<CLI::App> BuildApp(AppConfig& cfg) {
   }
   app->add_option("--state-dir", cfg.state_dir,
                   "OMS snapshot dir (restart recovery)");
+  if (cfg.sessions_file.empty()) {
+    cfg.sessions_file = home != nullptr
+                            ? std::string(home) + "/.cts/sessions.txt"
+                            : ".cts/sessions.txt";
+  }
+  app->add_option("--sessions-file", cfg.sessions_file,
+                  "trading session templates (product -> sections)");
+  if (cfg.holidays_file.empty()) {
+    cfg.holidays_file = home != nullptr
+                            ? std::string(home) + "/.cts/holidays.txt"
+                            : ".cts/holidays.txt";
+  }
+  app->add_option("--holidays-file", cfg.holidays_file,
+                  "holiday calendar, one YYYYMMDD per line");
   app->add_option("--strategy-instrument", cfg.strategy_instrument,
                   "run the SMA-cross demo strategy on this instrument "
                   "(empty disables)");

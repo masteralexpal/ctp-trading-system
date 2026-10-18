@@ -15,6 +15,7 @@
 #include <string_view>
 
 #include "instrument/instrument_master.h"
+#include "session/session.h"
 #include "td/order_sink.h"
 #include "td/rate_table.h"
 
@@ -53,6 +54,13 @@ class CheckedOrderSink final : public td::OrderSink {
   void SetRateTable(td::RateTable const* rates) {
     rates_.store(rates, std::memory_order_release);
   }
+  // Any thread; both must be set and outlive this sink. When unset (or the
+  // product is unknown), the trading-time check is skipped
+  void SetSessionGuard(session::Calendar const* calendar,
+                       session::SessionTable const* sessions) {
+    calendar_.store(calendar, std::memory_order_release);
+    sessions_.store(sessions, std::memory_order_release);
+  }
 
   // Kill switch: reject new orders until Resume
   void Halt() { halted_.store(true, std::memory_order_release); }
@@ -66,6 +74,8 @@ class CheckedOrderSink final : public td::OrderSink {
   std::atomic<bool> halted_{false};
   std::atomic<std::shared_ptr<instrument::InstrumentMaster const>> master_;
   std::atomic<td::RateTable const*> rates_{nullptr};
+  std::atomic<session::Calendar const*> calendar_{nullptr};
+  std::atomic<session::SessionTable const*> sessions_{nullptr};
 };
 
 }  // namespace cts::oms

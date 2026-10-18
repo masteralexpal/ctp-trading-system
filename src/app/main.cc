@@ -25,6 +25,7 @@
 #include "md/md_gateway.h"
 #include "oms/checked_order_sink.h"
 #include "oms/order_manager.h"
+#include "session/session.h"
 #include "strategy/sma_cross_strategy.h"
 #include "td/console_td_client.h"
 #include "td/td_dispatcher.h"
@@ -294,6 +295,23 @@ int RunTrading(cts::app::AppConfig const& cfg) {
     risk_sink.SetInstrumentMaster(master);
   }
   risk_sink.SetRateTable(&td_gateway.rates());
+
+  // Trading-time guard: session templates + holiday calendar, loaded when
+  // the files exist; absent files leave the guard off
+  cts::session::Calendar calendar;
+  cts::session::SessionTable sessions;
+  if (std::filesystem::exists(cfg.sessions_file)) {
+    if (!cts::session::LoadTemplates(cfg.sessions_file, sessions)) {
+      SPDLOG_WARN("sessions: parse failed: {}", cfg.sessions_file);
+    } else if (std::filesystem::exists(cfg.holidays_file) &&
+               !cts::session::LoadHolidays(cfg.holidays_file, calendar)) {
+      SPDLOG_WARN("holidays: parse failed: {}", cfg.holidays_file);
+    } else {
+      risk_sink.SetSessionGuard(&calendar, &sessions);
+      SPDLOG_INFO("sessions: {} templates, {} holidays", sessions.size(),
+                  calendar.size());
+    }
+  }
 
   if (!cfg.instruments.empty()) {
     if (md_gateway.Subscribe(cfg.instruments) == 0) {

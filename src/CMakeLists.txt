@@ -1,6 +1,7 @@
 add_subdirectory(base)
 add_subdirectory(instrument)
 add_subdirectory(metrics)
+add_subdirectory(session)
 add_subdirectory(md)
 add_subdirectory(td)
 add_subdirectory(strategy)

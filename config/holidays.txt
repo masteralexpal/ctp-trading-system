@@ -1,0 +1,5 @@
+# Holiday calendar: one YYYYMMDD per line ('#' starts a comment).
+# Fill from the exchange annual notices; weekends are handled by the
+# calendar itself and must NOT be listed here.
+#
+# Copy to ~/.cts/holidays.txt (or pass --holidays-file).

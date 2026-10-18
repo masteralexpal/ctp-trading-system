@@ -12,7 +12,9 @@
 
 #include <gtest/gtest.h>
 
+#include "base/time_utils.h"
 #include "oms/order_manager.h"
+#include "session/session.h"
 
 namespace cts::oms {
 namespace {
@@ -153,6 +155,43 @@ TEST_F(CheckedOrderSinkTest, MarginEstimateRejectsOverAvailable) {
 
 TEST_F(CheckedOrderSinkTest, MarginCheckSkippedWhenInputsUnknown) {
   // No rate table, no account: opens must not be blocked
+  EXPECT_FALSE(sink_.InsertOrder(MakeReq(1)).empty());
+}
+
+TEST_F(CheckedOrderSinkTest, OutsideTradingTimeIsRejected) {
+  session::Calendar cal;
+  session::SessionTable sessions;
+  // A one-minute section twelve hours away from now: never "now"
+  auto const dm = session::LocalDateAndMinute(base::NowEpochMs());
+  int const start = (dm.second + 720) % 1440;
+  sessions.Add(session::Template{.product = "rb",
+                                 .sections = {{start, start + 1}}});
+  sink_.SetInstrumentMaster(
+      std::make_shared<instrument::InstrumentMaster>(
+          instrument::InstrumentMaster::Build({[] {
+            instrument::Instrument i;
+            i.instrument_id = "rb2701";
+            i.product_id = "rb";
+            return i;
+          }()})));
+  sink_.SetSessionGuard(&cal, &sessions);
+  EXPECT_TRUE(sink_.InsertOrder(MakeReq(1)).empty());
+  EXPECT_TRUE(inner_.inserted.empty());
+}
+
+TEST_F(CheckedOrderSinkTest, InsideTradingTimePasses) {
+  session::Calendar cal;
+  session::SessionTable sessions;
+  sessions.Add(session::Template{.product = "rb", .sections = {{0, 1440}}});
+  sink_.SetInstrumentMaster(
+      std::make_shared<instrument::InstrumentMaster>(
+          instrument::InstrumentMaster::Build({[] {
+            instrument::Instrument i;
+            i.instrument_id = "rb2701";
+            i.product_id = "rb";
+            return i;
+          }()})));
+  sink_.SetSessionGuard(&cal, &sessions);
   EXPECT_FALSE(sink_.InsertOrder(MakeReq(1)).empty());
 }
 

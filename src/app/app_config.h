@@ -28,6 +28,8 @@ struct AppConfig {
   // OMS snapshot dir ($HOME/.cts/state); restart recovery for the ledger
   // and the order journal
   std::string state_dir;
+  std::string sessions_file;   // trading session templates
+  std::string holidays_file;   // holiday calendar
 
   // SMA-cross demo strategy; empty instrument = no strategy
   std::string strategy_instrument;
