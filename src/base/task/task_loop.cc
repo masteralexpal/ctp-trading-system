@@ -12,7 +12,7 @@
 
 namespace cts::base {
 
-TaskLoop::TaskLoop() {
+TaskLoop::TaskLoop(std::string_view name) : name_(name) {
   epoll_fd_ = epoll_create1(EPOLL_CLOEXEC);
   epoll_event ev{};
   ev.events = EPOLLIN;
@@ -62,12 +62,12 @@ void TaskLoop::UnwatchFd(int fd) {
   epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
 }
 
-void TaskLoop::Stop() {
+void TaskLoop::RequestStop() {
   stop_.store(true, std::memory_order_release);
   wake_event_.Signal();
 }
 
-void TaskLoop::Run() {
+void TaskLoop::RunImpl() {
   RegisterShutdownWakeEvent(&wake_event_);
   std::vector<Task> work;
   for (;;) {

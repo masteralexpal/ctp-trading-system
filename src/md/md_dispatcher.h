@@ -1,7 +1,7 @@
 /**
  * @file md_dispatcher.h
  * @author lipingan (lipingan.dev@outlook.com)
- * @brief Standard MdDelegate: box-and-enqueue, fan out on a worker thread.
+ * @brief MdDispatcher: an SpscLoop<MdEvent> pump plus the client fan-out.
  */
 #pragma once
 
@@ -13,24 +13,28 @@
 #include <utility>
 #include <vector>
 
-#include "base/futex_park.h"
-#include "base/spsc_queue.h"
+#include "base/run_loop.h"
+#include "base/spsc_loop.h"
 #include "md/detail/md_event.h"
 #include "md/md_client.h"
 #include "md/md_delegate.h"
 
 namespace cts::md {
 
-// Standard MdDelegate: on the CTP callback thread it only boxes and enqueues;
-// the consumer loop Run() is placed on a dedicated thread by the assembler
-// (this class spawns nothing).
+// Standard MdDelegate: on the CTP callback thread it only boxes and pushes;
+// the pump is a base::SpscLoop (single producer = the callback thread),
+// placed on a dedicated thread by the assembler (this class spawns nothing).
+// The dispatcher itself is just the fan-out policy over the loop: Dispatcher
+// = RunLoop + clients.
 //
 // Assembly order: AddClient* -> base::Thread.Start([&]{ d.Run(); }) ->
 // MdGateway::Connect -> ... -> MdGateway::Disconnect ->
 // RequestStop -> Thread.Stop
 class MdDispatcher final : public MdDelegate {
  public:
-  MdDispatcher() = default;
+  MdDispatcher()
+      : loop_("md-dispatch",
+              [this](detail::MdEvent const& e) { Dispatch(e); }) {}
   ~MdDispatcher() override = default;
 
   MdDispatcher(MdDispatcher const&) = delete;
@@ -39,14 +43,16 @@ class MdDispatcher final : public MdDelegate {
   // Call only before Run
   void AddClient(MdClient& client) { clients_.push_back(&client); }
 
-  // Consumer loop: parks on a futex when empty (zero CPU); runs on the
-  // caller's thread until RequestStop and drained
-  void Run();
-  // Idempotent, any thread; wakes the parked loop; Run drains then returns
-  void RequestStop();
+  // Consumer loop: runs on the caller's thread until RequestStop and drained
+  void Run() { loop_.Run(); }
+  // Idempotent, any thread; wakes the parked loop
+  void RequestStop() { loop_.RequestStop(); }
+
+  // The pump itself, for fleet operations (unified shutdown, health checks)
+  base::RunLoop& loop() { return loop_; }
 
   // Total events dropped on queue overflow (backpressure metric)
-  std::size_t dropped_events() const { return queue_.dropped(); }
+  std::size_t dropped_events() const { return loop_.dropped(); }
 
   // Login readiness (dispatch-thread written, readable from any thread)
   bool logged_in() const { return logged_in_.load(std::memory_order_acquire); }
@@ -85,14 +91,13 @@ class MdDispatcher final : public MdDelegate {
   }
 
  private:
-  void Push(detail::MdEvent event);
+  // Full queue drops the newest (snapshot semantics), counted by the loop
+  void Push(detail::MdEvent event) { loop_.TryPush(std::move(event)); }
   void Dispatch(detail::MdEvent const& event);
 
-  base::SpscQueue<detail::MdEvent, 4096> queue_;
+  base::SpscLoop<detail::MdEvent, 4096> loop_;
   std::vector<MdClient*> clients_;
-  std::atomic<bool> stop_requested_{false};
   std::atomic<bool> logged_in_{false};  // dispatch-thread written
-  base::FutexPark park_;
 };
 
 }  // namespace cts::md

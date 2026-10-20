@@ -12,30 +12,36 @@
 #include <chrono>
 #include <map>
 #include <mutex>
+#include <string>
+#include <string_view>
 #include <vector>
 
+#include "base/run_loop.h"
 #include "base/task/task.h"
 #include "base/task/task_queue.h"
 #include "base/waitable_event.h"
 
 namespace cts::base {
 
-// Task-centric loop in the Chromium MessagePump spirit: a TaskQueue for
-// scheduling plus an epoll set for parking. Plain tasks run FIFO; delayed
-// tasks fire at earliest after their delay (steady clock, no cancellation).
+// Task-centric RunLoop backend in the Chromium MessagePump spirit: a
+// TaskQueue for scheduling plus an epoll set for parking. Plain tasks run
+// FIFO; delayed tasks fire at earliest after their delay (steady clock, no
+// cancellation). Multi-producer: PostTask is any-thread safe.
 //
 // Run() parks on epoll (zero CPU): the set holds the wake event plus any
-// watched fds. It returns after Stop() or a process shutdown request
+// watched fds. It returns after RequestStop() or a process shutdown request
 // (base/shutdown.h), draining queued plain tasks; pending delayed tasks are
 // dropped. Multiple loops may Run() concurrently: each registers its wake
 // event in the shutdown registry.
-class TaskLoop {
+class TaskLoop final : public RunLoop {
  public:
-  TaskLoop();
-  ~TaskLoop();
+  explicit TaskLoop(std::string_view name = "task");
+  ~TaskLoop() override;
 
   TaskLoop(TaskLoop const&) = delete;
   TaskLoop& operator=(TaskLoop const&) = delete;
+
+  std::string_view name() const override { return name_; }
 
   // Any thread
   void PostTask(Task task);
@@ -49,14 +55,18 @@ class TaskLoop {
   void WatchFd(int fd, Task cb);
   void UnwatchFd(int fd);
 
-  void Run();
-  // Any thread
-  void Stop();
+  // RunLoop
+  void RequestStop() override;
+  void Wakeup() override { wake_event_.Signal(); }
+
+ protected:
+  void RunImpl() override;
 
  private:
   // One epoll pass; returns events processed. timeout_ms -1 = park forever
   int WaitForEvents(int timeout_ms);
 
+  std::string name_;
   TaskQueue task_queue_;
   std::mutex mutex_;  // guards watchers_ and graveyard_
   std::map<int, Task> watchers_;

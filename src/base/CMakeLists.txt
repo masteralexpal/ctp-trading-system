@@ -4,6 +4,7 @@ target_sources(
     base
     PRIVATE
         charset.cc
+        run_loop.cc
         shutdown.cc
         task/task_loop.cc
         task/task_queue.cc
@@ -21,7 +22,9 @@ target_sources(
                 latest_spsc_queue.h
                 string_utils.h
                 no_destructor.h
+                run_loop.h
                 shutdown.h
+                spsc_loop.h
                 spsc_queue.h
                 task/task.h
                 task/task_loop.h
@@ -48,6 +51,8 @@ if(CTS_ENABLE_UNIT_TESTS)
         # task_loop_test must precede shutdown_test: the shutdown flag is
         # process-global and sticky; tests are written to tolerate either
         # order EXCEPT TaskLoop's parking tests need the flag still unset
+        tests/run_loop_test.cc
+        tests/spsc_loop_test.cc
         tests/task_loop_test.cc
         tests/task_queue_test.cc
         tests/shutdown_test.cc

@@ -33,7 +33,7 @@ namespace cts::td {
 // RequestStop -> Thread.Stop
 class TdDispatcher final : public TdDelegate {
  public:
-  TdDispatcher() = default;
+  TdDispatcher() : loop_("td-dispatch") {}
   ~TdDispatcher() override = default;
 
   TdDispatcher(TdDispatcher const&) = delete;
@@ -45,7 +45,7 @@ class TdDispatcher final : public TdDelegate {
   // Consumer loop: runs on the caller's thread until RequestStop
   void Run() { loop_.Run(); }
   // Idempotent, any thread; Run drains remaining tasks then returns
-  void RequestStop() { loop_.Stop(); }
+  void RequestStop() { loop_.RequestStop(); }
 
   // The dispatcher's task loop: query throttling and reconnect timers post
   // their delayed tasks here (any-thread safe)

@@ -4,6 +4,7 @@
  * @brief main function entry point.
  */
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -16,6 +17,7 @@
 
 #include "app/cli.h"
 #include "app/console.h"
+#include "base/run_loop.h"
 #include "base/shutdown.h"
 #include "base/task/task_loop.h"
 #include "base/thread.h"
@@ -156,7 +158,7 @@ int RunTrading(cts::app::AppConfig const& cfg) {
 
   // Objects first, connects later: the Reconciler wires the loop and the td
   // gateway before either starts moving
-  cts::base::TaskLoop loop;
+  cts::base::TaskLoop loop{"main"};
   cts::md::MdGateway md_gateway;
   cts::td::TdGateway td_gateway;
   Reconciler reconciler{loop, td_gateway};
@@ -186,10 +188,14 @@ int RunTrading(cts::app::AppConfig const& cfg) {
   td_dispatch_thread.Start([&td_dispatcher] { td_dispatcher.Run(); });
 
   // Every worker loop must be RequestStop'ed before scope exit (~Thread
-  // joins; a parked Run() would hang forever)
-  auto const stop_all = [&] {
-    td_dispatcher.RequestStop();
-    dispatcher.RequestStop();
+  // joins; a parked Run() would hang forever). The fleet is the uniform
+  // control handle: one array, one shutdown path, td before md
+  std::array<cts::base::RunLoop*, 2> const loops = {&td_dispatcher.loop(),
+                                                    &dispatcher.loop()};
+  auto const stop_all = [&loops] {
+    for (auto* l : loops) {
+      l->RequestStop();
+    }
   };
 
   // flow dirs = configured root + role subdir (trailing slash fixed by

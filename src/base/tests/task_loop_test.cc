@@ -29,7 +29,7 @@ TEST(TaskLoopTest, RunsPostedTasksInFifoOrder) {
   for (int i = 0; i < 3; ++i) {
     loop.PostTask([&order, i] { order.push_back(i); });
   }
-  loop.PostTask([&loop] { loop.Stop(); });
+  loop.PostTask([&loop] { loop.RequestStop(); });
 
   Thread thread{"test-loop"};
   thread.Start([&] { loop.Run(); });
@@ -47,7 +47,7 @@ TEST(TaskLoopTest, TasksMayPostTasks) {
     loop.PostTask([&] { order.emplace_back("after-inner"); });
   });
   loop.PostTask([&] { order.emplace_back("last"); });
-  loop.PostTask([&loop] { loop.Stop(); });
+  loop.PostTask([&loop] { loop.RequestStop(); });
 
   Thread thread{"test-loop"};
   thread.Start([&] { loop.Run(); });
@@ -67,7 +67,7 @@ TEST(TaskLoopTest, DelayedTaskFiresAfterDelay) {
       [&] {
         elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - start);
-        loop.Stop();
+        loop.RequestStop();
       },
       100ms);
 
@@ -86,7 +86,7 @@ TEST(TaskLoopTest, StopWakesParkedLoop) {
 
   std::this_thread::sleep_for(50ms);  // let it park
   auto const begin = std::chrono::steady_clock::now();
-  loop.Stop();
+  loop.RequestStop();
   thread.Stop();  // joins; hangs forever if the wake is broken
   EXPECT_LT(std::chrono::steady_clock::now() - begin, 5s);
 }
@@ -100,7 +100,7 @@ TEST(TaskLoopTest, PlainTasksDrainOnStop) {
 
   loop.PostTask([&] { ++ran; });
   loop.PostTask([&] { ++ran; });
-  loop.Stop();
+  loop.RequestStop();
   thread.Stop();
   EXPECT_EQ(ran.load(), 2);
 }
@@ -125,7 +125,7 @@ TEST(TaskLoopTest, PendingDelayedTaskIsDroppedOnStop) {
   TaskLoop loop;
   std::atomic<bool> fired{false};
   loop.PostDelayedTask([&] { fired.store(true); }, 10s);
-  loop.PostTask([&loop] { loop.Stop(); });
+  loop.PostTask([&loop] { loop.RequestStop(); });
 
   Thread thread{"test-loop"};
   thread.Start([&] { loop.Run(); });
@@ -148,7 +148,7 @@ TEST(TaskLoopTest, WatchedFdFiresOnReadable) {
     ++fired;
     char c;
     static_cast<void>(read(fds[0], &c, 1));  // consume
-    loop.Stop();
+    loop.RequestStop();
   });
 
   Thread thread{"test-loop"};
