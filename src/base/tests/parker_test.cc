@@ -1,9 +1,9 @@
 /**
- * @file park_test.cc
+ * @file parker_test.cc
  * @author lipingan (lipingan.dev@outlook.com)
  * @brief Unit tests for base::Parker.
  */
-#include "base/sync/park.h"
+#include "base/sync/parker.h"
 
 #include <atomic>
 #include <chrono>

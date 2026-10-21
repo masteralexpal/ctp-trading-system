@@ -1,12 +1,12 @@
 /**
- * @file park.h
+ * @file parker.h
  * @author lipingan (lipingan.dev@outlook.com)
  * @brief Parker: zero-CPU park/notify for producer-consumer worker loops.
  */
 #pragma once
 
-#ifndef CTS_BASE_SYNC_PARK_H_
-#define CTS_BASE_SYNC_PARK_H_
+#ifndef CTS_BASE_SYNC_PARKER_H_
+#define CTS_BASE_SYNC_PARKER_H_
 
 #include <atomic>
 #include <cstdint>
@@ -63,4 +63,4 @@ class Parker {
 
 }  // namespace cts::base
 
-#endif  // CTS_BASE_SYNC_PARK_H_
+#endif  // CTS_BASE_SYNC_PARKER_H_

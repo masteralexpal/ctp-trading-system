@@ -1,9 +1,9 @@
 /**
- * @file park.cc
+ * @file parker.cc
  * @author lipingan (lipingan.dev@outlook.com)
  * @brief Parker: zero-CPU park/notify for producer-consumer worker loops.
  */
-#include "base/sync/park.h"
+#include "base/sync/parker.h"
 
 #include <linux/futex.h>
 #include <sys/syscall.h>

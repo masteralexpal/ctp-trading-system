@@ -4,7 +4,7 @@ target_sources(
     base
     PRIVATE
         charset.cc
-        sync/park.cc
+        sync/parker.cc
         sync/waitable_event.cc
         threading/run_loop.cc
         threading/task_loop.cc
@@ -23,7 +23,7 @@ target_sources(
                 no_destructor.h
                 shutdown.h
                 sync/latest_spsc_queue.h
-                sync/park.h
+                sync/parker.h
                 sync/spsc_queue.h
                 sync/waitable_event.h
                 threading/run_loop.h
@@ -48,7 +48,7 @@ if(CTS_ENABLE_UNIT_TESTS)
         tests/charset_test.cc
         tests/latest_spsc_queue_test.cc
         tests/no_destructor_test.cc
-        tests/park_test.cc
+        tests/parker_test.cc
         # task_loop_test must precede shutdown_test: the shutdown flag is
         # process-global and sticky; tests are written to tolerate either
         # order EXCEPT TaskLoop's parking tests need the flag still unset
