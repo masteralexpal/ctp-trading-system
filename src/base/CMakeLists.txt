@@ -4,6 +4,7 @@ target_sources(
     base
     PRIVATE
         charset.cc
+        sync/park.cc
         sync/waitable_event.cc
         threading/run_loop.cc
         threading/task_loop.cc
@@ -21,9 +22,8 @@ target_sources(
                 string_utils.h
                 no_destructor.h
                 shutdown.h
-                sync/futex_park.h
-                sync/futex_utils.h
                 sync/latest_spsc_queue.h
+                sync/park.h
                 sync/spsc_queue.h
                 sync/waitable_event.h
                 threading/run_loop.h
@@ -46,9 +46,9 @@ if(CTS_ENABLE_UNIT_TESTS)
     add_executable(
         base_test
         tests/charset_test.cc
-        tests/futex_park_test.cc
         tests/latest_spsc_queue_test.cc
         tests/no_destructor_test.cc
+        tests/park_test.cc
         # task_loop_test must precede shutdown_test: the shutdown flag is
         # process-global and sticky; tests are written to tolerate either
         # order EXCEPT TaskLoop's parking tests need the flag still unset

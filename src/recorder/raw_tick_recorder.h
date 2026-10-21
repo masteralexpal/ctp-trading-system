@@ -18,7 +18,7 @@
 #include <string>
 #include <string_view>
 
-#include "base/sync/futex_park.h"
+#include "base/sync/park.h"
 #include "base/sync/spsc_queue.h"
 #include "recorder/raw_tick_file.h"
 #include "md/raw_tick_sink.h"
@@ -67,7 +67,7 @@ class RawTickRecorder final : public md::RawTickSink {
   std::filesystem::path const dir_;
   std::string const source_;
   base::SpscQueue<RawTickRecord, 65536> queue_;
-  base::FutexPark park_;
+  base::Parker park_;
   std::atomic<bool> stop_requested_{false};
   std::atomic<std::uint64_t> recorded_{0};
   std::atomic<std::uint64_t> write_errors_{0};

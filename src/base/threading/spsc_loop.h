@@ -15,7 +15,7 @@
 #include <string_view>
 #include <utility>
 
-#include "base/sync/futex_park.h"
+#include "base/sync/park.h"
 #include "base/threading/run_loop.h"
 #include "base/sync/spsc_queue.h"
 
@@ -74,7 +74,7 @@ class SpscLoop final : public RunLoop {
  private:
   template <typename F>
   bool Publish(F&& e) {
-    // Publish state first, then bump the wake word (FutexPark's invariant)
+    // Publish state first, then bump the wake word (Parker's invariant)
     if (queue_.TryPush(std::forward<F>(e))) {
       park_.Notify();
       return true;
@@ -85,7 +85,7 @@ class SpscLoop final : public RunLoop {
   std::string name_;
   Handler handler_;
   SpscQueue<E, Capacity> queue_;
-  FutexPark park_;
+  Parker park_;
   std::atomic<bool> stop_{false};
 };
 

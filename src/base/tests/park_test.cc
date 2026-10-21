@@ -1,9 +1,9 @@
 /**
- * @file futex_park_test.cc
+ * @file park_test.cc
  * @author lipingan (lipingan.dev@outlook.com)
- * @brief Unit tests for base::FutexPark.
+ * @brief Unit tests for base::Parker.
  */
-#include "base/sync/futex_park.h"
+#include "base/sync/park.h"
 
 #include <atomic>
 #include <chrono>
@@ -15,14 +15,14 @@
 namespace cts::base {
 namespace {
 
-TEST(FutexParkTest, WaitUnlessReturnsImmediatelyWhenWorkPending) {
-  FutexPark park;
+TEST(ParkerTest, WaitUnlessReturnsImmediatelyWhenWorkPending) {
+  Parker park;
   // Must not park: the predicate is already true
   park.WaitUnless([] { return true; });
 }
 
-TEST(FutexParkTest, NotifyWakesParkedConsumer) {
-  FutexPark park;
+TEST(ParkerTest, NotifyWakesParkedConsumer) {
+  Parker park;
   std::atomic<bool> work{false};
   std::atomic<bool> consumed{false};
 
@@ -43,9 +43,9 @@ TEST(FutexParkTest, NotifyWakesParkedConsumer) {
 // The postmortem case (Documents/ctp/futex_lost_wakeup_postmortem.md): a
 // notify landing between the predicate check and the futex wait must not be
 // lost. Hammer the interleaving
-TEST(FutexParkTest, NoLostWakeupUnderStress) {
+TEST(ParkerTest, NoLostWakeupUnderStress) {
   constexpr std::uint64_t kTotal = 200000;
-  FutexPark park;
+  Parker park;
   std::atomic<std::uint64_t> produced{0};
   std::atomic<bool> stop{false};
   std::uint64_t consumed = 0;
@@ -92,8 +92,8 @@ TEST(FutexParkTest, NoLostWakeupUnderStress) {
   EXPECT_EQ(consumed, kTotal);
 }
 
-TEST(FutexParkTest, NotifyUnconditionallyWakesWithoutWork) {
-  FutexPark park;
+TEST(ParkerTest, NotifyUnconditionallyWakesWithoutWork) {
+  Parker park;
   // The stop flag is part of the predicate (the dispatcher pattern): a wake
   // landing before the futex wait is caught by the re-check, not lost
   std::atomic<bool> stop{false};
