@@ -9,7 +9,7 @@
 #include <csignal>
 #include <cstdlib>
 
-#include "base/waitable_event.h"
+#include "base/sync/waitable_event.h"
 
 namespace {
 

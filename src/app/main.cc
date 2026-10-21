@@ -17,10 +17,10 @@
 
 #include "app/cli.h"
 #include "app/console.h"
-#include "base/run_loop.h"
+#include "base/threading/run_loop.h"
 #include "base/shutdown.h"
-#include "base/task/task_loop.h"
-#include "base/thread.h"
+#include "base/threading/task_loop.h"
+#include "base/threading/thread.h"
 #include "base/version.h"
 #include "md/console_md_client.h"
 #include "md/md_dispatcher.h"

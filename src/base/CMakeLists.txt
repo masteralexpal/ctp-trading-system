@@ -4,35 +4,35 @@ target_sources(
     base
     PRIVATE
         charset.cc
-        run_loop.cc
-        shutdown.cc
-        task/task_loop.cc
-        task/task_queue.cc
+        sync/waitable_event.cc
+        threading/run_loop.cc
+        threading/task_loop.cc
+        threading/task_queue.cc
         time_utils.cc
+        shutdown.cc
         version.cc
-        waitable_event.cc
     PUBLIC
         FILE_SET HEADERS
             FILES
                 base_export.h
                 charset.h
-                futex_park.h
-                futex_utils.h
                 iconv_converter.h
-                latest_spsc_queue.h
                 string_utils.h
                 no_destructor.h
-                run_loop.h
                 shutdown.h
-                spsc_loop.h
-                spsc_queue.h
-                task/task.h
-                task/task_loop.h
-                task/task_queue.h
-                thread.h
+                sync/futex_park.h
+                sync/futex_utils.h
+                sync/latest_spsc_queue.h
+                sync/spsc_queue.h
+                sync/waitable_event.h
+                threading/run_loop.h
+                threading/spsc_loop.h
+                threading/task.h
+                threading/task_loop.h
+                threading/task_queue.h
+                threading/thread.h
                 time_utils.h
                 version.h
-                waitable_event.h
 )
 
 if(CTS_COMPONENT_BUILD)

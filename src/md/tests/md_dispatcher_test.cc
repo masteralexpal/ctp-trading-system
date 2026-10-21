@@ -12,7 +12,7 @@
 
 #include <gtest/gtest.h>
 
-#include "base/thread.h"
+#include "base/threading/thread.h"
 
 namespace cts::md {
 namespace {

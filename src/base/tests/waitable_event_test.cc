@@ -3,7 +3,7 @@
  * @author lipingan (lipingan.dev@outlook.com)
  * @brief WaitableEvent tests.
  */
-#include "base/waitable_event.h"
+#include "base/sync/waitable_event.h"
 
 #include <atomic>
 #include <chrono>

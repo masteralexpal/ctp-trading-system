@@ -13,8 +13,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/run_loop.h"
-#include "base/spsc_loop.h"
+#include "base/threading/run_loop.h"
+#include "base/threading/spsc_loop.h"
 #include "md/detail/md_event.h"
 #include "md/md_client.h"
 #include "md/md_delegate.h"

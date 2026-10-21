@@ -3,7 +3,7 @@
  * @author lipingan (lipingan.dev@outlook.com)
  * @brief SpscQueue (drop-newest SPSC) tests.
  */
-#include "base/spsc_queue.h"
+#include "base/sync/spsc_queue.h"
 
 #include <cstddef>
 #include <string>

@@ -15,9 +15,9 @@
 #include <string_view>
 #include <utility>
 
-#include "base/futex_park.h"
-#include "base/run_loop.h"
-#include "base/spsc_queue.h"
+#include "base/sync/futex_park.h"
+#include "base/threading/run_loop.h"
+#include "base/sync/spsc_queue.h"
 
 namespace cts::base {
 

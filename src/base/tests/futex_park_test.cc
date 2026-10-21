@@ -3,7 +3,7 @@
  * @author lipingan (lipingan.dev@outlook.com)
  * @brief Unit tests for base::FutexPark.
  */
-#include "base/futex_park.h"
+#include "base/sync/futex_park.h"
 
 #include <atomic>
 #include <chrono>

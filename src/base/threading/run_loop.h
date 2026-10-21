@@ -22,7 +22,8 @@ namespace cts::base {
 //
 // Backends (identical lifecycle, different payloads and overflow policies):
 //   base::TaskLoop      -- closures + timers, multi-producer (control plane)
-//   base::SpscLoop<E>   -- POD events, single producer, drop-newest backpressure
+//   base::SpscLoop<E>   -- POD events, single producer, drop-newest
+//   backpressure
 //
 // Model laws:
 //   1. A RunLoop spawns nothing; the assembler places Run() on a thread.

@@ -3,14 +3,14 @@
  * @author lipingan (lipingan.dev@outlook.com)
  * @brief SpscLoop tests: drain order, drop accounting, stop semantics.
  */
-#include "base/spsc_loop.h"
+#include "base/threading/spsc_loop.h"
 
 #include <vector>
 
 #include <gtest/gtest.h>
 
-#include "base/run_loop.h"
-#include "base/thread.h"
+#include "base/threading/run_loop.h"
+#include "base/threading/thread.h"
 
 namespace cts::base {
 namespace {

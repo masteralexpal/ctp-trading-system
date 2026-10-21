@@ -18,8 +18,8 @@
 #include <string>
 #include <string_view>
 
-#include "base/futex_park.h"
-#include "base/spsc_queue.h"
+#include "base/sync/futex_park.h"
+#include "base/sync/spsc_queue.h"
 #include "recorder/raw_tick_file.h"
 #include "md/raw_tick_sink.h"
 

@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "base/shutdown.h"
-#include "base/thread.h"
+#include "base/threading/thread.h"
 #include "base/version.h"
 #include "md/md_delegate.h"
 #include "md/md_gateway.h"

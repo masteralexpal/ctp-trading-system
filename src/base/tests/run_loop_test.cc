@@ -3,11 +3,11 @@
  * @author lipingan (lipingan.dev@outlook.com)
  * @brief RunLoop model law tests: TLS identity, affiliation, lifecycle.
  */
-#include "base/run_loop.h"
+#include "base/threading/run_loop.h"
 
 #include <gtest/gtest.h>
 
-#include "base/task/task_loop.h"
+#include "base/threading/task_loop.h"
 
 namespace cts::base {
 namespace {

@@ -3,7 +3,7 @@
  * @author lipingan (lipingan.dev@outlook.com)
  * @brief WaitableEvent (Chromium-aligned interface), eventfd-backed.
  */
-#include "base/waitable_event.h"
+#include "base/sync/waitable_event.h"
 
 #include <poll.h>
 #include <sys/eventfd.h>

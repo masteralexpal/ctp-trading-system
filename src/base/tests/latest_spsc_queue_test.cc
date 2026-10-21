@@ -3,7 +3,7 @@
  * @author lipingan (lipingan.dev@outlook.com)
  * @brief LatestSpscQueue (overwrite SPSC) tests.
  */
-#include "base/latest_spsc_queue.h"
+#include "base/sync/latest_spsc_queue.h"
 
 #include <atomic>
 #include <cstddef>

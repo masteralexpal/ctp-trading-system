@@ -3,7 +3,7 @@
  * @author lipingan (lipingan.dev@outlook.com)
  * @brief Named thread handle tests.
  */
-#include "base/thread.h"
+#include "base/threading/thread.h"
 
 #include <pthread.h>
 

@@ -16,10 +16,10 @@
 #include <string_view>
 #include <vector>
 
-#include "base/run_loop.h"
-#include "base/task/task.h"
-#include "base/task/task_queue.h"
-#include "base/waitable_event.h"
+#include "base/threading/run_loop.h"
+#include "base/threading/task.h"
+#include "base/threading/task_queue.h"
+#include "base/sync/waitable_event.h"
 
 namespace cts::base {
 

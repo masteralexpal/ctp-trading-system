@@ -3,7 +3,7 @@
  * @author lipingan (lipingan.dev@outlook.com)
  * @brief TaskLoop tests.
  */
-#include "base/task/task_loop.h"
+#include "base/threading/task_loop.h"
 
 #include <atomic>
 #include <chrono>
@@ -16,7 +16,7 @@
 #include <gtest/gtest.h>
 
 #include "base/shutdown.h"
-#include "base/thread.h"
+#include "base/threading/thread.h"
 
 namespace cts::base {
 namespace {
