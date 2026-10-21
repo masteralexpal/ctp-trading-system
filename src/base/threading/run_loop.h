@@ -5,25 +5,23 @@
  */
 #pragma once
 
-#ifndef CTS_BASE_RUN_LOOP_H_
-#define CTS_BASE_RUN_LOOP_H_
+#ifndef CTS_BASE_THREADING_RUN_LOOP_H_
+#define CTS_BASE_THREADING_RUN_LOOP_H_
 
 #include <string_view>
 
 namespace cts::base {
 
 // The conceptual threading model: every worker thread runs exactly one
-// RunLoop. The base carries RUNTIME IDENTITY and LIFECYCLE only -- posting
-// mechanics (closures, timers, POD events) live in the concrete subclasses.
-// A RunLoop* can identify, wake and stop a loop, but never post to it:
-// Current() is for identity/affiliation checks and self-reference, NOT a
-// global postbox. Cross-thread posting requires the concrete handle handed
-// out by the assembler, keeping every coupling explicit.
+// RunLoop. The base carries runtime identity and lifecycle only; posting
+// mechanics live in the concrete subclasses. A RunLoop* can identify, wake
+// and stop a loop, but never post to it: Current() is for identity and
+// affiliation checks, NOT a global postbox. Cross-thread posting requires
+// the concrete handle, keeping every coupling explicit.
 //
 // Backends (identical lifecycle, different payloads and overflow policies):
 //   base::TaskLoop      -- closures + timers, multi-producer (control plane)
 //   base::SpscLoop<E>   -- POD events, single producer, drop-newest
-//   backpressure
 //
 // Model laws:
 //   1. A RunLoop spawns nothing; the assembler places Run() on a thread.
@@ -63,4 +61,4 @@ class RunLoop {
 
 }  // namespace cts::base
 
-#endif  // CTS_BASE_RUN_LOOP_H_
+#endif  // CTS_BASE_THREADING_RUN_LOOP_H_

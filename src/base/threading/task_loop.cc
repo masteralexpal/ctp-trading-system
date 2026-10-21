@@ -92,9 +92,8 @@ void TaskLoop::RunImpl() {
       return;
     }
 
-    // Zero-timeout IO sweep before parking (Chromium's Run rhythm): ready IO
-    // is handled while we are awake; if any fired, loop around and re-take
-    // work instead of sleeping
+    // Zero-timeout IO sweep before parking: ready IO is handled while we are
+    // awake; if any fired, loop around and re-take work instead of sleeping
     if (WaitForEvents(0) > 0) {
       continue;
     }
@@ -104,9 +103,8 @@ void TaskLoop::RunImpl() {
       timeout_ms = static_cast<int>(to_next->count());
     }
 
-    // Park: the wake event is level-triggered, so any Signal() before this
-    // point keeps it readable and epoll_wait returns immediately -- no lost
-    // wakeup by construction
+    // The wake event is level-triggered: any Signal() before this point keeps
+    // it readable and epoll_wait returns immediately -- no lost wakeup
     WaitForEvents(timeout_ms);
   }
 }

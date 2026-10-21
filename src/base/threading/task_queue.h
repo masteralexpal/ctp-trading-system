@@ -5,8 +5,8 @@
  */
 #pragma once
 
-#ifndef CTS_BASE_TASK_TASK_QUEUE_H_
-#define CTS_BASE_TASK_TASK_QUEUE_H_
+#ifndef CTS_BASE_THREADING_TASK_QUEUE_H_
+#define CTS_BASE_THREADING_TASK_QUEUE_H_
 
 #include <chrono>
 #include <cstdint>
@@ -20,8 +20,8 @@
 namespace cts::base {
 
 // The storage half of a task loop: plain tasks FIFO, delayed tasks ordered by
-// (due, seq). Thread-safe; all methods callable from any thread. Pure
-// scheduling policy -- no parking, no threads, no IO.
+// (due, seq). Thread-safe, any-thread. Pure scheduling policy -- no parking,
+// no threads, no IO.
 class TaskQueue {
  public:
   TaskQueue() = default;
@@ -36,12 +36,10 @@ class TaskQueue {
   // Moves every runnable task (plain + due delayed) into out, preserving order
   void TakeWork(std::vector<Task>& out);
 
-  // Milliseconds until the next delayed task is due; nullopt if none pending.
-  // Runnable-plain-tasks are gone by construction after TakeWork
+  // Milliseconds until the next delayed task is due; nullopt if none pending
   std::optional<std::chrono::milliseconds> TimeToNextTask() const;
 
-  // True if nothing runnable right now (delayed tasks in the future count as
-  // not runnable)
+  // True if nothing runnable right now (future delayed tasks don't count)
   bool Empty() const;
 
  private:
@@ -63,4 +61,4 @@ class TaskQueue {
 
 }  // namespace cts::base
 
-#endif  // CTS_BASE_TASK_TASK_QUEUE_H_
+#endif  // CTS_BASE_THREADING_TASK_QUEUE_H_

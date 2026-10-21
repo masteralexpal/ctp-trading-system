@@ -5,8 +5,8 @@
  */
 #pragma once
 
-#ifndef CTS_BASE_SPSC_LOOP_H_
-#define CTS_BASE_SPSC_LOOP_H_
+#ifndef CTS_BASE_THREADING_SPSC_LOOP_H_
+#define CTS_BASE_THREADING_SPSC_LOOP_H_
 
 #include <atomic>
 #include <cstddef>
@@ -21,14 +21,11 @@
 
 namespace cts::base {
 
-// RunLoop backend for latency-sensitive POD streams: an SPSC ring buffer
-// plus a futex park, zero allocation per event. The producer is SINGLE by
-// contract -- TryPush from one thread only (the queue's single-writer
-// semantics depend on it). Overflow policy is drop-newest, counted in
-// dropped(): the producer never blocks.
-//
-// The handler runs on the loop thread once per drained event, in order.
-// RequestStop drains the queue before Run returns.
+// RunLoop backend for latency-sensitive POD streams: an SPSC ring plus a
+// Parker, zero allocation per event. Single producer by contract: TryPush
+// from one thread only. Overflow drops the newest (counted in dropped()),
+// so the producer never blocks. The handler runs on the loop thread, in
+// order; RequestStop drains the queue before Run returns.
 template <typename E, std::size_t Capacity>
 class SpscLoop final : public RunLoop {
  public:
@@ -91,4 +88,4 @@ class SpscLoop final : public RunLoop {
 
 }  // namespace cts::base
 
-#endif  // CTS_BASE_SPSC_LOOP_H_
+#endif  // CTS_BASE_THREADING_SPSC_LOOP_H_

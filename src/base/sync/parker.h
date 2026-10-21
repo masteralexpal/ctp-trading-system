@@ -14,10 +14,9 @@
 
 namespace cts::base {
 
-// Park/notify for a single consumer loop (SpscLoop and RawTickRecorder use
-// this): zero-CPU idle without lost wakeups. The blocking mechanism is an
-// implementation detail living in the .cc -- this header exposes no syscall
-// surface at all.
+// Park/notify for a single consumer loop: zero-CPU idle without lost
+// wakeups. The blocking mechanism is an implementation detail living in the
+// .cc -- this header exposes no syscall surface.
 //
 // Consumer: loop { drain work; parker.WaitUnless(work_pending); }
 // Producer: make work visible, then parker.Notify() -- ALWAYS in this order.

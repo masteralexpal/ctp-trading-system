@@ -5,18 +5,16 @@
  */
 #pragma once
 
-#ifndef CTS_BASE_WAITABLE_EVENT_H_
-#define CTS_BASE_WAITABLE_EVENT_H_
+#ifndef CTS_BASE_SYNC_WAITABLE_EVENT_H_
+#define CTS_BASE_SYNC_WAITABLE_EVENT_H_
 
 #include <chrono>
 
 namespace cts::base {
 
-// A signalable event, Chromium base::WaitableEvent semantics, Linux-only
-// (eventfd). Signal() is async-signal-safe (a bare write(2)).
-//
-// fd() is the epoll/poll ticket: the event can wait alongside sockets in one
-// poll set (the future admin-socket loop).
+// A signalable event (Chromium WaitableEvent semantics, eventfd-backed).
+// Signal() is async-signal-safe; fd() is the epoll/poll ticket so the event
+// can wait alongside sockets in one poll set
 class WaitableEvent {
  public:
   enum class ResetPolicy {
@@ -52,4 +50,4 @@ class WaitableEvent {
 
 }  // namespace cts::base
 
-#endif  // CTS_BASE_WAITABLE_EVENT_H_
+#endif  // CTS_BASE_SYNC_WAITABLE_EVENT_H_

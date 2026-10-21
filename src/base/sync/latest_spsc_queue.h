@@ -6,8 +6,8 @@
  */
 #pragma once
 
-#ifndef CTS_BASE_LATEST_SPSC_QUEUE_H_
-#define CTS_BASE_LATEST_SPSC_QUEUE_H_
+#ifndef CTS_BASE_SYNC_LATEST_SPSC_QUEUE_H_
+#define CTS_BASE_SYNC_LATEST_SPSC_QUEUE_H_
 
 #include <atomic>
 #include <cstddef>
@@ -38,10 +38,7 @@ class LatestSpscQueue {
   LatestSpscQueue() = default;
 
   ~LatestSpscQueue() {
-    // Pops move out but never destroy, so every written slot still holds a
-    // live object; reclaim here. destroy_at is a no-op for trivially
-    // destructible T; the lifetime skeleton stays in case the static_assert
-    // above is ever relaxed.
+    // Pops move out but never destroy; reclaim every written slot here
     for (auto& slot : slots_) {
       if (slot.constructed) {
         std::destroy_at(slot.Ptr());
@@ -61,12 +58,11 @@ class LatestSpscQueue {
   void Emplace(Args&&... args) {
     std::size_t const tail = tail_.load(std::memory_order_relaxed);
     Slot& slot = slots_[tail & kMask];
-    // Mark "writing" (odd seq) before touching data: a consumer mid-copy
-    // always observes the seq change, no overwrite window goes undetected
+    // Mark "writing" (odd seq) before touching data, so a consumer mid-copy
+    // always detects the overwrite
     slot.seq.store(((tail + 1) << 1) | 1, std::memory_order_release);
     if (slot.constructed) {
-      std::destroy_at(
-          slot.Ptr());  // reclaim before overwriting (not counted; see TryPop)
+      std::destroy_at(slot.Ptr());  // reclaim before overwriting
     }
     std::construct_at(slot.Ptr(), std::forward<Args>(args)...);
     slot.constructed = true;
@@ -74,32 +70,30 @@ class LatestSpscQueue {
     tail_.store(tail + 1, std::memory_order_release);
   }
 
-  // Consumer side: returns false when empty.
-  // Drop accounting lives here (single writer): every overwritten or torn
-  // element is counted exactly once.
+  // Consumer side: false when empty. Drop accounting lives here (single
+  // writer): every overwritten or torn element is counted exactly once
   [[nodiscard]] bool TryPop(T& out) {
     for (;;) {
       std::size_t const head = head_.load(std::memory_order_relaxed);
       if (head == tail_.load(std::memory_order_acquire)) {
-        return false;  // empty
+        return false;
       }
       Slot& slot = slots_[head & kMask];
       std::size_t const seq = slot.seq.load(std::memory_order_acquire);
       if (seq == 0 || (seq >> 1) - 1 != head) {
-        // Different round in slot: this element was overwritten. Step one slot
-        // at a time; never jump -- live elements may sit in between
+        // Slot holds a different round: this element was overwritten. Step one
+        // slot at a time; never jump -- live elements may sit in between
         dropped_.fetch_add(1, std::memory_order_relaxed);
         head_.store(head + 1, std::memory_order_relaxed);
         continue;
       }
       if ((seq & 1) != 0) {
-        // Producer is writing this slot; retry (no advance, no count). The
-        // write window is tens of ns, so pure spin is fine
+        // Producer is mid-write on this slot; the window is tens of ns, spin
         continue;
       }
       out = std::move(*slot.Ptr());
       if (slot.seq.load(std::memory_order_acquire) != seq) {
-        // Overwritten mid-copy (torn): discard the copy, count and advance
+        // Overwritten mid-copy (torn): discard, count, advance
         dropped_.fetch_add(1, std::memory_order_relaxed);
         head_.store(head + 1, std::memory_order_relaxed);
         continue;
@@ -125,8 +119,7 @@ class LatestSpscQueue {
   };
 
   // Slots are deliberately not cache-line aligned: this queue targets
-  // Tick-sized (hundreds of bytes) elements. For tiny hot elements, align
-  // Slot to CacheLineSize instead.
+  // Tick-sized (hundreds of bytes) elements
   Slot slots_[Capacity];
 
   alignas(CacheLineSize) std::atomic<std::size_t> head_{0};  // consumer writes
@@ -137,4 +130,4 @@ class LatestSpscQueue {
 
 }  // namespace cts::base
 
-#endif  // CTS_BASE_LATEST_SPSC_QUEUE_H_
+#endif  // CTS_BASE_SYNC_LATEST_SPSC_QUEUE_H_

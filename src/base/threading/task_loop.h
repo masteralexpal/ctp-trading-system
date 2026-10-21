@@ -5,8 +5,8 @@
  */
 #pragma once
 
-#ifndef CTS_BASE_TASK_TASK_LOOP_H_
-#define CTS_BASE_TASK_TASK_LOOP_H_
+#ifndef CTS_BASE_THREADING_TASK_LOOP_H_
+#define CTS_BASE_THREADING_TASK_LOOP_H_
 
 #include <atomic>
 #include <chrono>
@@ -23,16 +23,12 @@
 
 namespace cts::base {
 
-// Task-centric RunLoop backend in the Chromium MessagePump spirit: a
-// TaskQueue for scheduling plus an epoll set for parking. Plain tasks run
-// FIFO; delayed tasks fire at earliest after their delay (steady clock, no
-// cancellation). Multi-producer: PostTask is any-thread safe.
-//
-// Run() parks on epoll (zero CPU): the set holds the wake event plus any
-// watched fds. It returns after RequestStop() or a process shutdown request
-// (base/shutdown.h), draining queued plain tasks; pending delayed tasks are
-// dropped. Multiple loops may Run() concurrently: each registers its wake
-// event in the shutdown registry.
+// Task-centric RunLoop backend: a TaskQueue plus an epoll set for parking
+// (wake event + watched fds). Multi-producer: PostTask is any-thread. Plain
+// tasks run FIFO; delayed tasks fire at earliest after their delay (no
+// cancellation). Run() parks with zero CPU, drains plain tasks on stop and
+// drops pending delayed ones; a process shutdown request (base/shutdown.h)
+// also ends it
 class TaskLoop final : public RunLoop {
  public:
   explicit TaskLoop(std::string_view name = "task");
@@ -48,10 +44,9 @@ class TaskLoop final : public RunLoop {
   void PostDelayedTask(Task task, std::chrono::milliseconds delay);
 
   // Runs cb on the loop thread whenever fd is readable (level-triggered).
-  // Any thread. UnwatchFd removes the watcher (the fd itself stays open).
-  // Safe to call from inside the callback itself: the removed task retires
-  // to a graveyard cleared by the loop thread, so an executing callback is
-  // never destroyed mid-run
+  // Any thread. Safe to UnwatchFd from inside the callback itself: the
+  // removed task retires to a graveyard cleared between callbacks, so an
+  // executing callback is never destroyed mid-run
   void WatchFd(int fd, Task cb);
   void UnwatchFd(int fd);
 
@@ -70,8 +65,7 @@ class TaskLoop final : public RunLoop {
   TaskQueue task_queue_;
   std::mutex mutex_;  // guards watchers_ and graveyard_
   std::map<int, Task> watchers_;
-  // Retired watchers, destroyed at the top of the next Run iteration (the
-  // loop thread is the only cleaner, and no callback is executing there)
+  // Retired watchers, destroyed at the top of the next Run iteration
   std::vector<Task> graveyard_;
   WaitableEvent wake_event_{WaitableEvent::ResetPolicy::kAutomatic};
   int epoll_fd_ = -1;
@@ -80,4 +74,4 @@ class TaskLoop final : public RunLoop {
 
 }  // namespace cts::base
 
-#endif  // CTS_BASE_TASK_TASK_LOOP_H_
+#endif  // CTS_BASE_THREADING_TASK_LOOP_H_

@@ -5,8 +5,8 @@
  */
 #pragma once
 
-#ifndef CTS_BASE_SPSC_QUEUE_H_
-#define CTS_BASE_SPSC_QUEUE_H_
+#ifndef CTS_BASE_SYNC_SPSC_QUEUE_H_
+#define CTS_BASE_SYNC_SPSC_QUEUE_H_
 
 #include <atomic>
 #include <cstddef>
@@ -17,17 +17,11 @@
 
 namespace cts::base {
 
-// Fixed-size lock-free SPSC ring buffer; drops the newest when full.
-//
-// Contract: TryPush/TryEmplace on the producer thread only, TryPop on the
-// consumer thread only. A full queue rejects the push (returns false, counted
-// in dropped()) -- dropping the newest is deliberate: the producer never
-// touches head, keeping strict single-writer semantics. Elements live in raw
-// storage via placement new, so T need not be default-constructible.
-//
-// Slot storage is heap-allocated at construction: Capacity * sizeof(T) can
-// be megabytes, which must not land inline in a stack frame.
-// Indices are monotonic (safe within 2^64); Capacity must be a power of two.
+// Fixed-size lock-free SPSC ring; drops the NEWEST when full (counted in
+// dropped()) so the producer never blocks and never touches head. Contract:
+// push on the producer thread only, pop on the consumer thread only.
+// Capacity must be a power of two; slot storage is heap-allocated because
+// Capacity * sizeof(T) can be megabytes.
 // See latest_spsc_queue.h for the drop-oldest variant.
 template <typename T,
           std::size_t Capacity,
@@ -117,4 +111,4 @@ class SpscQueue {
 
 }  // namespace cts::base
 
-#endif  // CTS_BASE_SPSC_QUEUE_H_
+#endif  // CTS_BASE_SYNC_SPSC_QUEUE_H_
