@@ -8,6 +8,7 @@ target_sources(
         threading/run_loop.cc
         threading/task_loop.cc
         threading/task_queue.cc
+        threading/thread.cc
         time_utils.cc
         shutdown.cc
         version.cc

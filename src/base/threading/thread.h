@@ -5,8 +5,8 @@
  */
 #pragma once
 
-#ifndef CTS_BASE_THREAD_H_
-#define CTS_BASE_THREAD_H_
+#ifndef CTS_BASE_THREADING_THREAD_H_
+#define CTS_BASE_THREADING_THREAD_H_
 
 #include <pthread.h>
 
@@ -20,7 +20,7 @@ namespace cts::base {
 class Thread {
  public:
   explicit Thread(std::string name) : name_(std::move(name)) {}
-  ~Thread() { Stop(); }
+  ~Thread();
 
   Thread(Thread const&) = delete;
   Thread& operator=(Thread const&) = delete;
@@ -40,16 +40,10 @@ class Thread {
         });
   }
 
-  void Stop() {
-    if (thread_.joinable()) {
-      thread_.join();
-    }
-  }
+  void Stop();
 
-  bool IsRunning() const noexcept {
-    return running_.load(std::memory_order_acquire);
-  }
-  std::string const& name() const noexcept { return name_; }
+  bool IsRunning() const noexcept;
+  std::string const& name() const noexcept;
 
  private:
   std::string name_;
@@ -59,4 +53,4 @@ class Thread {
 
 }  // namespace cts::base
 
-#endif  // CTS_BASE_THREAD_H_
+#endif  // CTS_BASE_THREADING_THREAD_H_
