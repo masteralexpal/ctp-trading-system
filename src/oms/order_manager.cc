@@ -12,7 +12,9 @@
 #include <vector>
 
 #include "base/string_utils.h"
+#include "base/threading/task_loop.h"
 #include "base/time_utils.h"
+#include "td/order_sink.h"
 
 #include <spdlog/spdlog.h>
 
@@ -40,6 +42,9 @@ void OrderManager::OnTdOrder(td::OrderReport const& order) {
   auto& entry = journal_[order.order_ref];
   entry.report = order;
   entry.updated_epoch_ms = base::NowEpochMs();
+  if (td::IsTerminal(order.status)) {
+    cancel_requested_.erase(order.order_ref);  // the ref is settled
+  }
   SaveLocked();
 }
 
@@ -86,6 +91,60 @@ OrderManager::OpenExposure OrderManager::InFlightOpenExposure(
     }
   }
   return e;
+}
+
+namespace {
+
+// Self-reposting watchdog task (the HealthTick pattern in main.cc)
+struct TimeoutSweep {
+  OrderManager* om;
+  base::TaskLoop* loop;
+  td::OrderSink* sink;
+  std::chrono::milliseconds timeout;
+  std::chrono::milliseconds period;
+  void operator()() const {
+    om->SweepStaleOrders(base::NowEpochMs(), *sink, timeout);
+    loop->PostDelayedTask(*this, period);
+  }
+};
+
+}  // namespace
+
+void OrderManager::EnableOrderTimeout(base::TaskLoop& loop,
+                                      td::OrderSink& sink,
+                                      std::chrono::milliseconds timeout) {
+  auto const period =
+      std::max<std::chrono::milliseconds>(timeout / 2,
+                                          std::chrono::milliseconds{100});
+  loop.PostDelayedTask(TimeoutSweep{this, &loop, &sink, timeout, period},
+                       period);
+}
+
+void OrderManager::SweepStaleOrders(std::int64_t now_ms,
+                                    td::OrderSink& sink,
+                                    std::chrono::milliseconds timeout) {
+  std::vector<std::string> stale;
+  {
+    std::lock_guard lock(mutex_);
+    for (auto const& [ref, entry] : journal_) {
+      if (td::IsTerminal(entry.report.status) ||
+          cancel_requested_.contains(ref)) {
+        continue;
+      }
+      if (now_ms - entry.updated_epoch_ms >= timeout.count()) {
+        stale.push_back(ref);
+      }
+    }
+    for (auto const& ref : stale) {
+      cancel_requested_.insert(ref);
+    }
+  }
+  // Cancels outside the lock: the sink may re-enter the manager
+  for (auto const& ref : stale) {
+    SPDLOG_WARN("oms: order {} stale over {}ms, canceling", ref,
+                timeout.count());
+    sink.CancelOrder(ref);
+  }
 }
 
 void OrderManager::OnTdTrade(td::TradeReport const& trade) {

@@ -9,6 +9,7 @@
 #define CTS_OMS_ORDER_MANAGER_H_
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -22,6 +23,13 @@
 
 #include "instrument/instrument_master.h"
 #include "td/td_client.h"
+
+namespace cts::base {
+class TaskLoop;
+}
+namespace cts::td {
+class OrderSink;
+}
 
 namespace cts::oms {
 
@@ -107,6 +115,18 @@ class OrderManager final : public td::TdClient {
     double notional{0};
   };
   OpenExposure InFlightOpenExposure(std::string_view instrument_id) const;
+
+  // Watchdog: working orders with no report progress for `timeout` are
+  // canceled via `sink` (pass the risk sink -- cancels always pass it).
+  // Replaces tick-driven timeout logic: fires even when the market stalls.
+  // The sweep re-posts itself on `loop` every timeout/2 (min 100ms). Enable
+  // once at assembly; the loop must stop before this manager dies
+  void EnableOrderTimeout(base::TaskLoop& loop, td::OrderSink& sink,
+                          std::chrono::milliseconds timeout);
+  // One watchdog step: cancel every live journal order whose last report is
+  // older than timeout at now_ms. Public so tests drive it without a loop
+  void SweepStaleOrders(std::int64_t now_ms, td::OrderSink& sink,
+                        std::chrono::milliseconds timeout);
   // The TradingDay the ledger currently buckets against; empty before the
   // first trade
   std::string trading_day() const;
@@ -160,6 +180,8 @@ class OrderManager final : public td::TdClient {
   // In-memory only -- the RESUME replay seam is intra-process; a process
   // restart reconciles from the broker position snapshot instead
   std::unordered_set<std::string> seen_trades_;
+  // Refs the watchdog already canceled: one cancel request per order
+  std::unordered_set<std::string> cancel_requested_;
   std::string current_day_;
   std::optional<td::AccountReport> account_;
   std::filesystem::path snapshot_path_;  // empty = persistence off

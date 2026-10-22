@@ -297,6 +297,9 @@ int RunTrading(cts::app::AppConfig const& cfg) {
   // Pre-trade risk gate: all order flow (console + strategy) goes through it.
   // Position/account reconciliation is the Reconciler's job (throttle-spaced)
   cts::oms::CheckedOrderSink risk_sink{td_gateway, order_manager, {}};
+  // Stale working orders are canceled by the OMS watchdog on the main loop:
+  // fires even when the market stalls (tick-driven canceling cannot)
+  order_manager.EnableOrderTimeout(loop, risk_sink, std::chrono::seconds{3});
   if (master != nullptr) {
     risk_sink.SetInstrumentMaster(master);
   }

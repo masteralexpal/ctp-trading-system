@@ -157,30 +157,25 @@ TEST_F(SmaCrossTest, ReversalCancelsThenFiresTheNewDirection) {
   EXPECT_DOUBLE_EQ(sink.inserted[1].limit_price, 84.0);   // bid
 }
 
-TEST_F(SmaCrossTest, TimedOutOrderIsCanceledAndChased) {
-  SmaCrossConfig cfg = config;
-  cfg.order_timeout_ms = 0;  // stale on the very next tick
-  SmaCrossStrategy s{cfg, sink};
-  s.Start();
-  FeedPrices(s, {100, 100, 100, 110, 110});  // buy in flight @111
+TEST_F(SmaCrossTest, CancelCompletionRefiresTheSameDirection) {
+  strategy.Start();
+  FeedPrices(strategy, {100, 100, 100, 110, 110});  // cross up: buy in flight
   ASSERT_EQ(sink.inserted.size(), 1u);
 
-  s.OnTick(TickOf("rb2701", 110));  // same sign, aged out: cancel
+  FeedPrices(strategy, {90, 90});  // reversal: cancel, prev sign re-armed
   ASSERT_EQ(sink.canceled.size(), 1u);
   EXPECT_EQ(sink.canceled[0], "fake-1");
-  // One cancel per flight: further ticks do not spam
-  s.OnTick(TickOf("rb2701", 110));
-  EXPECT_EQ(sink.canceled.size(), 1u);
 
-  td::OrderReport report{};
+  td::OrderReport report{};  // the cancel lands
   std::strncpy(report.order_ref, "fake-1", sizeof(report.order_ref) - 1);
   report.status = td::OrderStatus::kCanceled;
-  s.OnTdOrder(report);
+  strategy.OnTdOrder(report);
 
-  s.OnTick(TickOf("rb2701", 112));  // chase: resubmit at the new ask
+  FeedPrices(strategy, {110, 110});  // sign back up: chase re-fires the buy
   ASSERT_EQ(sink.inserted.size(), 2u);
   EXPECT_EQ(sink.inserted[1].direction, td::Direction::kBuy);
-  EXPECT_DOUBLE_EQ(sink.inserted[1].limit_price, 113.0);
+  EXPECT_EQ(sink.inserted[1].offset, td::Offset::kOpen);
+  EXPECT_DOUBLE_EQ(sink.inserted[1].limit_price, 111.0);  // ask
 }
 
 TEST_F(SmaCrossTest, RejectedOrderClearsFlight) {

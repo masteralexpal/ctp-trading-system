@@ -59,16 +59,14 @@ void SmaCrossStrategy::OnTick(md::Tick const& tick) {
         fast_sma_ > slow_sma_ ? 1 : (fast_sma_ < slow_sma_ ? -1 : 0);
 
     if (order_in_flight_) {
-      // Working order: cancel once on reversal or timeout; prev_sign_ stays
-      // stale so the intent re-fires the tick after the flight ends
+      // Working order: cancel once on reversal; prev_sign_ stays stale so the
+      // intent re-fires the tick after the flight ends. Stale-order cancels
+      // are the OMS watchdog's job, not the strategy's
       if (!cancel_sent_ && sign != 0) {
         bool const reversed =
             (sign > 0 && working_dir_ == td::Direction::kSell) ||
             (sign < 0 && working_dir_ == td::Direction::kBuy);
-        auto const age = std::chrono::steady_clock::now() - submitted_at_;
-        bool const stale =
-            age >= std::chrono::milliseconds{config_.order_timeout_ms};
-        if (reversed || stale) {
+        if (reversed) {
           cancel = true;
           cancel_ref = working_ref_;
           cancel_sent_ = true;
@@ -76,8 +74,8 @@ void SmaCrossStrategy::OnTick(md::Tick const& tick) {
           // re-fire on the first tick after the flight ends, even when the
           // sign never changed
           prev_sign_ = 0;
-          SPDLOG_INFO("strategy {}: cancel {} ({})", name(), working_ref_,
-                      reversed ? "signal reversed" : "order timed out");
+          SPDLOG_INFO("strategy {}: cancel {} (signal reversed)", name(),
+                      working_ref_);
         }
       }
     } else {
@@ -120,7 +118,6 @@ void SmaCrossStrategy::OnTick(md::Tick const& tick) {
       order_in_flight_ = true;
       working_ref_ = ref;
       working_dir_ = req.direction;
-      submitted_at_ = std::chrono::steady_clock::now();
       cancel_sent_ = false;
       own_refs_.insert(ref);
       SPDLOG_INFO("strategy {}: {} {} {} @{} ref={}", name(),

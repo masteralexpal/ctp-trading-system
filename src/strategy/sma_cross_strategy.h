@@ -8,7 +8,6 @@
 #ifndef CTS_STRATEGY_SMA_CROSS_STRATEGY_H_
 #define CTS_STRATEGY_SMA_CROSS_STRATEGY_H_
 
-#include <chrono>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -26,9 +25,8 @@ struct SmaCrossConfig {
   int slow{20};    // slow SMA window (ticks)
   int volume{1};   // lots per order
   int max_pos{1};  // absolute position cap (signed)
-  // Working orders are canceled once they outlive this (chase follows on the
-  // next tick); 0 = cancel on the very next tick
-  int order_timeout_ms{3000};
+  // Stale working orders are canceled by the OMS watchdog
+  // (OrderManager::EnableOrderTimeout), not by this strategy
 };
 
 // Dual-SMA crossover on tick last_price: fast crossing above slow goes long,
@@ -78,7 +76,6 @@ class SmaCrossStrategy final : public Strategy {
   bool order_in_flight_{false};
   std::string working_ref_;
   td::Direction working_dir_{td::Direction::kBuy};
-  std::chrono::steady_clock::time_point submitted_at_{};
   bool cancel_sent_{false};  // one cancel per flight, no spam
   // Every ref this strategy ever submitted: fills are matched against this
   // set, NOT working_ref_ -- CTP sends OnRtnOrder(all-traded) BEFORE

@@ -14,8 +14,21 @@
 
 #include <gtest/gtest.h>
 
+#include "base/time_utils.h"
+#include "td/order_sink.h"
+
 namespace cts::oms {
 namespace {
+
+class FakeCancelSink final : public td::OrderSink {
+ public:
+  std::vector<std::string> canceled;
+  std::string InsertOrder(td::OrderRequest const&) override { return {}; }
+  int CancelOrder(std::string_view ref) override {
+    canceled.emplace_back(ref);
+    return 0;
+  }
+};
 
 td::OrderReport MakeOrder(std::string_view ref,
                           std::string_view instrument,
@@ -193,6 +206,37 @@ TEST(OrderManagerTest, InFlightExposureHandsOffFromIntentToJournal) {
   e = oms.InFlightOpenExposure("rb2701");
   EXPECT_EQ(e.net_lots, -1);
   EXPECT_DOUBLE_EQ(e.notional, 3600.0);
+}
+
+TEST(OrderManagerTest, StaleLiveOrderIsCanceledOnce) {
+  OrderManager oms;
+  FakeCancelSink sink;
+  auto const t0 = base::NowEpochMs();
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kSubmitted, 2, 0));
+
+  oms.SweepStaleOrders(t0 + 400, sink, std::chrono::milliseconds{500});
+  EXPECT_TRUE(sink.canceled.empty());  // fresh
+
+  oms.SweepStaleOrders(t0 + 600, sink, std::chrono::milliseconds{500});
+  EXPECT_EQ(sink.canceled, std::vector<std::string>{"1"});
+
+  // One cancel per ref: later sweeps do not spam while the cancel is in flight
+  oms.SweepStaleOrders(t0 + 5000, sink, std::chrono::milliseconds{500});
+  EXPECT_EQ(sink.canceled.size(), 1u);
+
+  // The terminal settles the ref
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kCanceled, 2, 0));
+  oms.SweepStaleOrders(t0 + 99999, sink, std::chrono::milliseconds{500});
+  EXPECT_EQ(sink.canceled.size(), 1u);
+}
+
+TEST(OrderManagerTest, TerminalOrdersAreNeverSwept) {
+  OrderManager oms;
+  FakeCancelSink sink;
+  auto const t0 = base::NowEpochMs();
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kAllTraded, 2, 2));
+  oms.SweepStaleOrders(t0 + 99999, sink, std::chrono::milliseconds{500});
+  EXPECT_TRUE(sink.canceled.empty());
 }
 
 TEST(OrderManagerTest, OpenFillAddsTodayBucket) {
