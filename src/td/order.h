@@ -51,6 +51,13 @@ enum class OrderStatus : char {
   kUnknown,
 };
 
+// Terminal states are absorbing: once reached, no later report may change the
+// order (RESUME replay and unordered sources deliver stale reports freely)
+inline bool IsTerminal(OrderStatus s) {
+  return s == OrderStatus::kAllTraded || s == OrderStatus::kCanceled ||
+         s == OrderStatus::kRejected;
+}
+
 // Order state report, normalized from OnRtnOrder / OnRspOrderInsert /
 // OnErrRtnOrderInsert. order_ref correlates back to the request; front_id +
 // session_id + order_ref is the cancel key.

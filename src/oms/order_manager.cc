@@ -27,9 +27,14 @@ td::Direction Opposite(td::Direction d) {
 
 void OrderManager::OnTdOrder(td::OrderReport const& order) {
   std::lock_guard lock(mutex_);
-  // Latest report wins; terminal states stay in the journal. CTP fires the
+  // Latest report wins among live states; terminal states absorb everything
+  // that arrives after them (replay, unordered sources). CTP fires the
   // all-traded report BEFORE the trade reports -- the journal reflects it,
   // but only trades touch the ledger (no double counting)
+  auto const it = journal_.find(order.order_ref);
+  if (it != journal_.end() && td::IsTerminal(it->second.report.status)) {
+    return;
+  }
   auto& entry = journal_[order.order_ref];
   entry.report = order;
   entry.updated_epoch_ms = base::NowEpochMs();
@@ -289,8 +294,7 @@ void OrderManager::SaveLocked() {
                  static_cast<int>(r.direction), static_cast<int>(r.offset),
                  r.limit_price, r.volume_total_original, r.volume_traded,
                  r.volume_total, static_cast<int>(r.status), r.front_id,
-                 r.session_id,
-                 static_cast<long long>(entry.updated_epoch_ms));
+                 r.session_id, static_cast<long long>(entry.updated_epoch_ms));
   }
   std::fprintf(f, "end\n");
   std::fclose(f);

@@ -26,7 +26,8 @@ namespace cts::oms {
 
 // Journal entry: the latest known state of one order. The FSM is implicit --
 // the broker's report stream is the source of truth; we keep the newest
-// report per order_ref, terminal states included (never erased)
+// report per order_ref, and terminal states are absorbing: once terminal, no
+// later report changes the entry (stale replays never resurrect an order)
 struct OrderEntry {
   td::OrderReport report;
   std::int64_t updated_epoch_ms;
@@ -72,8 +73,8 @@ class OrderManager final : public td::TdClient {
   // reconcile -- local state restores what the broker lacks: avg_price,
   // realized_pnl, the order journal
   void SetSnapshotPath(std::filesystem::path path);
-  bool LoadSnapshot();   // false on missing/corrupt file (fresh start)
-  void SaveSnapshot();   // public for the explicit shutdown save
+  bool LoadSnapshot();  // false on missing/corrupt file (fresh start)
+  void SaveSnapshot();  // public for the explicit shutdown save
 
   // td::TdClient (td dispatch thread)
   void OnTdConnected() override {}

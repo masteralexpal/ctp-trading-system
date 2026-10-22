@@ -95,6 +95,18 @@ TEST(OrderManagerTest, JournalKeepsLatestReportPerRef) {
   }
 }
 
+TEST(OrderManagerTest, TerminalOrderAbsorbsStaleReports) {
+  OrderManager oms;
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kSubmitted, 2, 0));
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kCanceled, 2, 0));
+  // Stale replay arriving after the terminal must not resurrect the order
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kSubmitted, 2, 0));
+
+  auto const orders = oms.orders();
+  ASSERT_EQ(orders.size(), 1);
+  EXPECT_EQ(orders[0].report.status, td::OrderStatus::kCanceled);
+}
+
 TEST(OrderManagerTest, OpenFillAddsTodayBucket) {
   OrderManager oms;
   oms.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,

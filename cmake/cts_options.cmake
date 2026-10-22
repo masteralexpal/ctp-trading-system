@@ -9,3 +9,4 @@ option(
 )
 option(CTS_ENABLE_UNIT_TESTS "Enable unit test targets" ON)
 option(CTS_ENABLE_COVERAGE "Enable code coverage (LLVM cov) for unit tests" OFF)
+option(CTS_ENABLE_FUZZERS "Enable libFuzzer targets (Clang only)" OFF)
