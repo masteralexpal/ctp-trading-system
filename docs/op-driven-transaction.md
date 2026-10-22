@@ -170,11 +170,18 @@ CTP 查询流与私有流**无共享序号**, `OnRspQryOrder` 行与 RESUME 重�
 
 裁决: **无在途单(含 intent)才接受快照, 否则推迟到 quiesce**; 快照时刻之后的分歧只告警。账户 LWW 同理需闸门。
 
-### 6.3 RESUME/RESTART 语义核实(待办)
+### 6.3 RESUME/RESTART 语义核实(已核实, 2026-10-22)
 
-`src/td/td_gateway.cc:38` 订阅 `THOST_TERT_RESUME(1)`。按 CTP 文档, RESTART=从本交易日开始全量重传, RESUME=从 .con 书签续传。评审中有报告将两者语义写反, 需对照官方文档核实并修正注释。无论结论如何: 崩溃若发生在书签刷盘之前, 接缝重复必然发生, trade_id 去重无条件必须做; 若将来改用 RESTART, 去重升级为全日规模生死线。
+`src/td/td_gateway.cc` 订阅 `THOST_TERT_RESUME(=1)`: 断线后从 .con 书签续传, 断线窗口的回报不丢。RESTART(0) 全日重传, QUICK(2) 跳过断线窗口。原注释首行误写为 QUICK 语义, 已修正。结论: 崩溃若发生在书签刷盘之前, 接缝重复必然发生, trade_id 去重无条件必须做(已落地, 切片 2)。
 
-### 6.4 撤单-成交竞速的 effects 时机
+### 6.4 裁决记录(2026-10-22 拍板, 切片 6 的开工前提)
+
+- **终态冲突: 批准 6.1 原案。** 未 ready(启动/重连恢复窗口)查询流终态覆盖并告警; ready 后先到终态赢, 冲突只告警。实现: OrderReport 加来源标记(kStream/kQuery)。
+- **quiesce 闸门: 批准 6.2 原案, 账户快照同闸门。** 无在途(intent 空 + 无活单 + 无挂起终态 effect)才应用快照, 否则保留最新一份推迟到 quiesce; 闸门期间分歧只告警。看门狗撤卡死单保证 quiesce 有界可达。
+- **avg_price/realized_pnl: 快照本地优先。** broker 快照只裁决手数; 本地快照是这两个字段的唯一持久真相源(现状即正确, 固化为裁决); op-log 全量重放提供全精度 derive 作为审计路径。
+
+
+### 6.5 撤单-成交竞速的 effects 时机
 
 格层面无事(终态吸收 + volume 取 max), 但 effects 会抢跑: 策略看到 kCanceled 即认为 flight 结束, 尾随成交随后才改仓位 → 瞬间超仓。裁决: **"flight 结束"effect 延迟到 Σfills 追上终态报告的 volume_traded 才发出**。(CTP 常态就是全成回报先于成交明细到达, `order_manager.cc` 注释自述。)
 
