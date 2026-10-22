@@ -12,21 +12,24 @@
 #include <string>
 
 #include "md/md_client.h"
-#include "td/td_client.h"
+#include "oms/oms_listener.h"
 
 namespace cts::strategy {
 
-// A strategy is both an MdClient (ticks in) and a TdClient (order/trade
-// updates in); it emits orders through an td::OrderSink.
+// A strategy is an MdClient (ticks in) plus an OmsListener (order/trade
+// effects in); it emits orders through a td::OrderSink. Trading events arrive
+// as OMS EFFECTS, not raw broadcast: replays and stale reports never reach
+// the strategy, and a terminal "flight over" fires only after the fills it
+// announced are already in the ledger.
 //
-// Threading: OnTick runs on the md-dispatch thread, OnTd* on the
+// Threading: OnTick runs on the md-dispatch thread, On* effects on the
 // td-dispatch thread -- two threads touch one strategy. Concrete strategies
 // must synchronize their own state (a mutex is fine at this scale). The
 // upgrade path is a per-strategy event funnel thread.
 //
-// The base signs both client contracts with deliberate no-ops; concrete
-// strategies override only what they consume.
-class Strategy : public md::MdClient, public td::TdClient {
+// The base signs both contracts with deliberate no-ops; concrete strategies
+// override only what they consume.
+class Strategy : public md::MdClient, public oms::OmsListener {
  public:
   explicit Strategy(std::string name) : name_(std::move(name)) {}
   ~Strategy() override = default;
@@ -47,19 +50,11 @@ class Strategy : public md::MdClient, public td::TdClient {
   void OnTick(md::Tick const& /*tick*/) override {}
   void OnMdError(int /*error_id*/, std::string_view /*msg*/) override {}
 
-  // td::TdClient
-  void OnTdConnected() override {}
-  void OnTdDisconnected(int /*reason*/) override {}
-  void OnTdReady(bool /*success*/, std::string_view /*msg*/) override {}
-  void OnTdOrder(td::OrderReport const& /*order*/) override {}
-  void OnTdTrade(td::TradeReport const& /*trade*/) override {}
-  // Broker position snapshot: the OMS's reconciliation input; strategies may
-  // also consume it to resync their virtual position after a restart
-  void OnTdPositions(
-      std::shared_ptr<std::vector<td::PositionRow> const> /*rows*/) override {
-  }
-  void OnTdAccount(td::AccountReport const& /*account*/) override {}
-  void OnTdError(int /*error_id*/, std::string_view /*msg*/) override {}
+  // oms::OmsListener
+  void OnOrderUpdate(td::OrderReport const& /*report*/) override {}
+  void OnTradeApplied(td::TradeReport const& /*trade*/) override {}
+  void OnPositionsReconciled(
+      std::shared_ptr<std::vector<td::PositionRow> const> /*rows*/) override {}
 
  private:
   std::string const name_;

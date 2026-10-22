@@ -127,7 +127,7 @@ void SmaCrossStrategy::OnTick(md::Tick const& tick) {
   }
 }
 
-void SmaCrossStrategy::OnTdOrder(td::OrderReport const& order) {
+void SmaCrossStrategy::OnOrderUpdate(td::OrderReport const& order) {
   std::lock_guard lock(mutex_);
   if (order.order_ref != working_ref_) {
     return;  // not ours (manual orders share the stream)
@@ -144,7 +144,7 @@ void SmaCrossStrategy::OnTdOrder(td::OrderReport const& order) {
   }
 }
 
-void SmaCrossStrategy::OnTdTrade(td::TradeReport const& trade) {
+void SmaCrossStrategy::OnTradeApplied(td::TradeReport const& trade) {
   std::lock_guard lock(mutex_);
   if (!own_refs_.contains(trade.order_ref)) {
     return;  // not ours
@@ -158,7 +158,7 @@ void SmaCrossStrategy::OnTdTrade(td::TradeReport const& trade) {
               trade.volume, trade.price, position_);
 }
 
-void SmaCrossStrategy::OnTdPositions(
+void SmaCrossStrategy::OnPositionsReconciled(
     std::shared_ptr<std::vector<td::PositionRow> const> rows) {
   std::lock_guard lock(mutex_);
   if (order_in_flight_) {

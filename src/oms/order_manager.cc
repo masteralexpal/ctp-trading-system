@@ -28,24 +28,42 @@ td::Direction Opposite(td::Direction d) {
 }  // namespace
 
 void OrderManager::OnTdOrder(td::OrderReport const& order) {
-  std::lock_guard lock(mutex_);
-  // Any report (confirm or reject) finalizes the matching intent
-  intents_.erase(order.order_ref);
-  // Latest report wins among live states; terminal states absorb everything
-  // that arrives after them (replay, unordered sources). CTP fires the
-  // all-traded report BEFORE the trade reports -- the journal reflects it,
-  // but only trades touch the ledger (no double counting)
-  auto const it = journal_.find(order.order_ref);
-  if (it != journal_.end() && td::IsTerminal(it->second.report.status)) {
-    return;
+  std::optional<td::OrderReport> effect;
+  {
+    std::lock_guard lock(mutex_);
+    // Any report (confirm or reject) finalizes the matching intent
+    intents_.erase(order.order_ref);
+    // Latest report wins among live states; terminal states absorb everything
+    // that arrives after them (replay, unordered sources). CTP fires the
+    // all-traded report BEFORE the trade reports -- the journal reflects it,
+    // but only trades touch the ledger (no double counting)
+    auto const it = journal_.find(order.order_ref);
+    if (it != journal_.end() && td::IsTerminal(it->second.report.status)) {
+      return;  // absorbed: no transition, no effect
+    }
+    auto& entry = journal_[order.order_ref];
+    entry.report = order;
+    entry.updated_epoch_ms = base::NowEpochMs();
+    if (td::IsTerminal(order.status)) {
+      cancel_requested_.erase(order.order_ref);  // the ref is settled
+      // CTP announces terminal states BEFORE the trailing trade details:
+      // delay the effect until the announced fills have been applied, so a
+      // listener never sees "flight over" before the ledger shows the fills
+      if (order.volume_traded > filled_[order.order_ref]) {
+        pending_terminal_[order.order_ref] = order;
+      } else {
+        effect = order;
+      }
+    } else {
+      effect = order;
+    }
+    SaveLocked();
   }
-  auto& entry = journal_[order.order_ref];
-  entry.report = order;
-  entry.updated_epoch_ms = base::NowEpochMs();
-  if (td::IsTerminal(order.status)) {
-    cancel_requested_.erase(order.order_ref);  // the ref is settled
+  if (effect.has_value()) {
+    for (auto* l : listeners_) {
+      l->OnOrderUpdate(*effect);
+    }
   }
-  SaveLocked();
 }
 
 void OrderManager::RegisterIntent(td::OrderRequest const& req,
@@ -148,70 +166,95 @@ void OrderManager::SweepStaleOrders(std::int64_t now_ms,
 }
 
 void OrderManager::OnTdTrade(td::TradeReport const& trade) {
-  std::lock_guard lock(mutex_);
-  // Dedup on the exchange-side idempotency key: RESUME replay and reconnect
-  // re-deliver trades. An empty trade_id cannot be told apart, so it is
-  // always applied (pre-dedup behavior)
-  if (trade.trade_id[0] != '\0') {
-    std::string key = trade.exchange_id;
-    key += '|';
-    key += trade.trading_day;
-    key += '|';
-    key += trade.trade_id;
-    if (!seen_trades_.insert(std::move(key)).second) {
-      return;
+  std::optional<td::OrderReport> terminal_effect;
+  {
+    std::lock_guard lock(mutex_);
+    // Dedup on the exchange-side idempotency key: RESUME replay and reconnect
+    // re-deliver trades. An empty trade_id cannot be told apart, so it is
+    // always applied (pre-dedup behavior)
+    if (trade.trade_id[0] != '\0') {
+      std::string key = trade.exchange_id;
+      key += '|';
+      key += trade.trading_day;
+      key += '|';
+      key += trade.trade_id;
+      if (!seen_trades_.insert(std::move(key)).second) {
+        return;  // replay: no ledger change, no effect
+      }
+    }
+    RollTradingDay(trade.trading_day);
+    ApplyTrade(trade);
+    filled_[trade.order_ref] += trade.volume;
+    // Release a delayed terminal effect once its announced fills have landed
+    if (auto const it = pending_terminal_.find(trade.order_ref);
+        it != pending_terminal_.end() &&
+        filled_[trade.order_ref] >= it->second.volume_traded) {
+      terminal_effect = it->second;
+      pending_terminal_.erase(it);
+    }
+    SaveLocked();
+  }
+  for (auto* l : listeners_) {
+    l->OnTradeApplied(trade);
+  }
+  if (terminal_effect.has_value()) {
+    for (auto* l : listeners_) {
+      l->OnOrderUpdate(*terminal_effect);
     }
   }
-  RollTradingDay(trade.trading_day);
-  ApplyTrade(trade);
-  SaveLocked();
 }
 
 void OrderManager::OnTdPositions(
     std::shared_ptr<std::vector<td::PositionRow> const> rows) {
-  std::lock_guard lock(mutex_);
-  // Broker snapshot is authoritative: adopt its buckets, warn on divergence.
-  // avg_price is NOT in the snapshot (PositionRow carries volumes only) --
-  // after a restart it stays approximate until new fills re-weight it
-  for (auto const& row : *rows) {
-    Key const key{row.instrument_id, row.direction};
-    auto& pos = ledger_[key];
-    if (pos.instrument_id.empty()) {
-      pos.instrument_id = row.instrument_id;
-      pos.side = row.direction;
+  {
+    std::lock_guard lock(mutex_);
+    // Broker snapshot is authoritative: adopt its buckets, warn on divergence.
+    // avg_price is NOT in the snapshot (PositionRow carries volumes only) --
+    // after a restart it stays approximate until new fills re-weight it
+    for (auto const& row : *rows) {
+      Key const key{row.instrument_id, row.direction};
+      auto& pos = ledger_[key];
+      if (pos.instrument_id.empty()) {
+        pos.instrument_id = row.instrument_id;
+        pos.side = row.direction;
+      }
+      if (pos.yd_volume != row.yd_volume ||
+          pos.today_volume != row.today_volume) {
+        SPDLOG_WARN(
+            "oms: reconcile {} {} local(today={} yd={}) broker(today={} "
+            "yd={}), adopting broker",
+            row.instrument_id,
+            row.direction == td::Direction::kBuy ? "long" : "short",
+            pos.today_volume, pos.yd_volume, row.today_volume, row.yd_volume);
+        pos.yd_volume = row.yd_volume;
+        pos.today_volume = row.today_volume;
+        if (pos.total() == 0) {
+          pos.avg_price = 0;
+        }
+      }
     }
-    if (pos.yd_volume != row.yd_volume ||
-        pos.today_volume != row.today_volume) {
-      SPDLOG_WARN(
-          "oms: reconcile {} {} local(today={} yd={}) broker(today={} "
-          "yd={}), adopting broker",
-          row.instrument_id,
-          row.direction == td::Direction::kBuy ? "long" : "short",
-          pos.today_volume, pos.yd_volume, row.today_volume, row.yd_volume);
-      pos.yd_volume = row.yd_volume;
-      pos.today_volume = row.today_volume;
-      if (pos.total() == 0) {
+    // Ledger entries missing from the snapshot are flat at the broker
+    for (auto& [key, pos] : ledger_) {
+      bool const in_snapshot = std::any_of(
+          rows->begin(), rows->end(), [&](td::PositionRow const& row) {
+            return key.instrument_id == row.instrument_id &&
+                   key.side == row.direction;
+          });
+      if (!in_snapshot && pos.total() != 0) {
+        SPDLOG_WARN(
+            "oms: reconcile {} {} absent from broker snapshot, zeroing",
+            key.instrument_id,
+            key.side == td::Direction::kBuy ? "long" : "short");
+        pos.yd_volume = 0;
+        pos.today_volume = 0;
         pos.avg_price = 0;
       }
     }
+    SaveLocked();
   }
-  // Ledger entries missing from the snapshot are flat at the broker
-  for (auto& [key, pos] : ledger_) {
-    bool const in_snapshot = std::any_of(
-        rows->begin(), rows->end(), [&](td::PositionRow const& row) {
-          return key.instrument_id == row.instrument_id &&
-                 key.side == row.direction;
-        });
-    if (!in_snapshot && pos.total() != 0) {
-      SPDLOG_WARN("oms: reconcile {} {} absent from broker snapshot, zeroing",
-                  key.instrument_id,
-                  key.side == td::Direction::kBuy ? "long" : "short");
-      pos.yd_volume = 0;
-      pos.today_volume = 0;
-      pos.avg_price = 0;
-    }
+  for (auto* l : listeners_) {
+    l->OnPositionsReconciled(rows);
   }
-  SaveLocked();
 }
 
 void OrderManager::OnTdAccount(td::AccountReport const& account) {

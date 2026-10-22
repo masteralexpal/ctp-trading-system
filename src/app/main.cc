@@ -347,7 +347,7 @@ int RunTrading(cts::app::AppConfig const& cfg) {
           },
           risk_sink);
       dispatcher.AddClient(*strategy);
-      td_dispatcher.AddClient(*strategy);
+      order_manager.AddListener(*strategy);  // effects, not raw broadcast
       strategy->Start();
       SPDLOG_INFO("strategy {} started (fast={} slow={} volume={})",
                   strategy->name(), cfg.strategy_fast, cfg.strategy_slow,

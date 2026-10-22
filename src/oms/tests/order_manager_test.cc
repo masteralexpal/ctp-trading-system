@@ -239,6 +239,98 @@ TEST(OrderManagerTest, TerminalOrdersAreNeverSwept) {
   EXPECT_TRUE(sink.canceled.empty());
 }
 
+class RecordingListener final : public OmsListener {
+ public:
+  std::vector<std::string> events;  // e.g. "order:1:4", "trade:T1"
+
+  void OnOrderUpdate(td::OrderReport const& report) override {
+    events.push_back("order:" + std::string(report.order_ref) + ":" +
+                     std::to_string(static_cast<int>(report.status)));
+  }
+  void OnTradeApplied(td::TradeReport const& trade) override {
+    events.push_back("trade:" + std::string(trade.trade_id));
+  }
+  void OnPositionsReconciled(
+      std::shared_ptr<std::vector<td::PositionRow> const>) override {
+    events.push_back("positions");
+  }
+};
+
+TEST(OrderManagerTest, EffectsPreserveArrivalOrder) {
+  OrderManager oms;
+  RecordingListener listener;
+  oms.AddListener(listener);
+
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kSubmitted, 2, 0));
+  oms.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,
+                          3500, 1, "20261017", "1", "T1"));
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kPartTraded, 2, 1));
+  oms.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,
+                          3501, 1, "20261017", "1", "T2"));
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kAllTraded, 2, 2));
+
+  // kAllTraded = 4 in the OrderStatus enum... verify against the enum
+  std::string const all_traded =
+      std::to_string(static_cast<int>(td::OrderStatus::kAllTraded));
+  EXPECT_EQ(listener.events,
+            (std::vector<std::string>{
+                "order:1:" +
+                    std::to_string(static_cast<int>(td::OrderStatus::kSubmitted)),
+                "trade:T1",
+                "order:1:" + std::to_string(
+                                 static_cast<int>(td::OrderStatus::kPartTraded)),
+                "trade:T2",
+                "order:1:" + all_traded}));
+}
+
+TEST(OrderManagerTest, AbsorbedAndReplayedEventsEmitNothing) {
+  OrderManager oms;
+  RecordingListener listener;
+  oms.AddListener(listener);
+
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kCanceled, 2, 0));
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kSubmitted, 2, 0));
+  auto const t = MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,
+                           3500, 1, "20261017", "2", "T9");
+  oms.OnTdTrade(t);
+  oms.OnTdTrade(t);  // replay
+
+  ASSERT_EQ(listener.events.size(), 2u);
+  EXPECT_EQ(listener.events[1], "trade:T9");
+}
+
+TEST(OrderManagerTest, TerminalEffectWaitsForTrailingFills) {
+  OrderManager oms;
+  RecordingListener listener;
+  oms.AddListener(listener);
+
+  // CTP order: the all-traded report arrives BEFORE the trade details
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kAllTraded, 2, 2));
+  EXPECT_TRUE(listener.events.empty());  // announced fills not applied yet
+
+  oms.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,
+                          3500, 1, "20261017", "1", "T1"));
+  EXPECT_EQ(listener.events,
+            (std::vector<std::string>{"trade:T1"}));  // one fill short
+
+  oms.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,
+                          3501, 1, "20261017", "1", "T2"));
+  // Caught up: the terminal effect fires now, AFTER the fills
+  ASSERT_EQ(listener.events.size(), 3u);
+  EXPECT_EQ(listener.events[1], "trade:T2");
+  EXPECT_EQ(listener.events[2],
+            "order:1:" +
+                std::to_string(static_cast<int>(td::OrderStatus::kAllTraded)));
+}
+
+TEST(OrderManagerTest, TerminalWithoutFillsFiresImmediately) {
+  OrderManager oms;
+  RecordingListener listener;
+  oms.AddListener(listener);
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kCanceled, 2, 0));
+  ASSERT_EQ(listener.events.size(), 1u);
+}
+
 TEST(OrderManagerTest, OpenFillAddsTodayBucket) {
   OrderManager oms;
   oms.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,

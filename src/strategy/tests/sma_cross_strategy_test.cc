@@ -90,7 +90,7 @@ TEST_F(SmaCrossTest, FillUpdatesPositionAndClearsFlight) {
   td::OrderReport report{};
   std::strncpy(report.order_ref, ref.c_str(), sizeof(report.order_ref) - 1);
   report.status = td::OrderStatus::kAllTraded;
-  strategy.OnTdOrder(report);
+  strategy.OnOrderUpdate(report);
   EXPECT_FALSE(strategy.status().order_in_flight);
 
   td::TradeReport trade{};
@@ -99,7 +99,7 @@ TEST_F(SmaCrossTest, FillUpdatesPositionAndClearsFlight) {
   trade.offset = td::Offset::kOpen;
   trade.volume = 1;
   trade.price = 111.0;
-  strategy.OnTdTrade(trade);
+  strategy.OnTradeApplied(trade);
   EXPECT_EQ(strategy.status().position, 1);
 }
 
@@ -110,11 +110,11 @@ TEST_F(SmaCrossTest, CrossDownClosesLongWithCloseTodayOnShfe) {
   std::strncpy(trade.order_ref, "fake-1", sizeof(trade.order_ref) - 1);
   trade.direction = td::Direction::kBuy;
   trade.volume = 1;
-  strategy.OnTdTrade(trade);
+  strategy.OnTradeApplied(trade);
   td::OrderReport report{};
   std::strncpy(report.order_ref, "fake-1", sizeof(report.order_ref) - 1);
   report.status = td::OrderStatus::kAllTraded;
-  strategy.OnTdOrder(report);
+  strategy.OnOrderUpdate(report);
 
   FeedPrices(strategy, {90, 90, 90});  // cross down
   ASSERT_EQ(sink.inserted.size(), 2u);
@@ -148,7 +148,7 @@ TEST_F(SmaCrossTest, ReversalCancelsThenFiresTheNewDirection) {
   td::OrderReport report{};  // the cancel lands
   std::strncpy(report.order_ref, "fake-1", sizeof(report.order_ref) - 1);
   report.status = td::OrderStatus::kCanceled;
-  strategy.OnTdOrder(report);
+  strategy.OnOrderUpdate(report);
 
   strategy.OnTick(TickOf("rb2701", 85));  // stale prev re-fires the intent
   ASSERT_EQ(sink.inserted.size(), 2u);
@@ -169,7 +169,7 @@ TEST_F(SmaCrossTest, CancelCompletionRefiresTheSameDirection) {
   td::OrderReport report{};  // the cancel lands
   std::strncpy(report.order_ref, "fake-1", sizeof(report.order_ref) - 1);
   report.status = td::OrderStatus::kCanceled;
-  strategy.OnTdOrder(report);
+  strategy.OnOrderUpdate(report);
 
   FeedPrices(strategy, {110, 110});  // sign back up: chase re-fires the buy
   ASSERT_EQ(sink.inserted.size(), 2u);
@@ -185,7 +185,7 @@ TEST_F(SmaCrossTest, RejectedOrderClearsFlight) {
   td::OrderReport report{};
   std::strncpy(report.order_ref, "fake-1", sizeof(report.order_ref) - 1);
   report.status = td::OrderStatus::kRejected;
-  strategy.OnTdOrder(report);
+  strategy.OnOrderUpdate(report);
   EXPECT_FALSE(strategy.status().order_in_flight);
 }
 
@@ -199,7 +199,7 @@ TEST_F(SmaCrossTest, IgnoresOtherInstrumentsAndRefs) {
   std::strncpy(trade.order_ref, "manual-9", sizeof(trade.order_ref) - 1);
   trade.direction = td::Direction::kBuy;
   trade.volume = 5;
-  strategy.OnTdTrade(trade);
+  strategy.OnTradeApplied(trade);
   EXPECT_EQ(strategy.status().position, 0);
 }
 
@@ -218,14 +218,14 @@ TEST_F(SmaCrossTest, BrokerSnapshotResyncsPosition) {
   auto rows = std::make_shared<std::vector<td::PositionRow>>();
   rows->push_back(RowOf("rb2701", td::Direction::kBuy, 1, 0));
   rows->push_back(RowOf("cu2611", td::Direction::kSell, 2, 0));  // not ours
-  strategy.OnTdPositions(rows);
+  strategy.OnPositionsReconciled(rows);
   EXPECT_EQ(strategy.status().position, 1);
 
   // Long + short legs net out; absent instruments are flat
   rows = std::make_shared<std::vector<td::PositionRow>>();
   rows->push_back(RowOf("rb2701", td::Direction::kBuy, 1, 0));
   rows->push_back(RowOf("rb2701", td::Direction::kSell, 0, 2));
-  strategy.OnTdPositions(rows);
+  strategy.OnPositionsReconciled(rows);
   EXPECT_EQ(strategy.status().position, -1);
 }
 
@@ -235,7 +235,7 @@ TEST_F(SmaCrossTest, BrokerSnapshotSkippedWhileOrderInFlight) {
   ASSERT_EQ(sink.inserted.size(), 1u);
 
   // A snapshot taken before the fill must not regress the local position
-  strategy.OnTdPositions(
+  strategy.OnPositionsReconciled(
       std::make_shared<std::vector<td::PositionRow>>());  // broker still flat
   EXPECT_EQ(strategy.status().position, 0);
   EXPECT_TRUE(strategy.status().order_in_flight);

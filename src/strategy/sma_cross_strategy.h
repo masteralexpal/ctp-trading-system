@@ -40,13 +40,15 @@ class SmaCrossStrategy final : public Strategy {
  public:
   SmaCrossStrategy(SmaCrossConfig config, td::OrderSink& order_sink);
 
-  void OnTick(md::Tick const& tick) override;             // md-dispatch thread
-  void OnTdOrder(td::OrderReport const& order) override;  // td-dispatch thread
-  void OnTdTrade(td::TradeReport const& trade) override;  // td-dispatch thread
+  void OnTick(md::Tick const& tick) override;  // md-dispatch thread
+  // oms::OmsListener (td-dispatch thread; terminal updates arrive only after
+  // the fills they announced, so position_ is current when a flight ends)
+  void OnOrderUpdate(td::OrderReport const& order) override;
+  void OnTradeApplied(td::TradeReport const& trade) override;
   // Resyncs the virtual position from the broker snapshot (restart/reconnect
   // recovery); skipped while an order is in flight -- the snapshot may lag
-  // its fill. td-dispatch thread
-  void OnTdPositions(
+  // its fill
+  void OnPositionsReconciled(
       std::shared_ptr<std::vector<td::PositionRow> const> rows) override;
 
   struct Status {

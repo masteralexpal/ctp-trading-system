@@ -19,8 +19,8 @@ BacktestResult RunBacktest(std::filesystem::path const& file,
   sink.SetFee(fee, volume_multiple);
   oms::OrderManager ledger;
   strategy::SmaCrossStrategy strategy{config, sink};
-  sink.AddClient(strategy);
   sink.AddClient(ledger);
+  ledger.AddListener(strategy);  // effects, mirroring the production wiring
   strategy.Start();
 
   recorder::RawTickFileReader reader;

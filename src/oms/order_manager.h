@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "instrument/instrument_master.h"
+#include "oms/oms_listener.h"
 #include "td/td_client.h"
 
 namespace cts::base {
@@ -75,6 +76,9 @@ class OrderManager final : public td::TdClient {
       std::shared_ptr<instrument::InstrumentMaster const> master) {
     master_.store(std::move(master));
   }
+
+  // The effects output channel. Register at assembly, before events flow
+  void AddListener(OmsListener& listener) { listeners_.push_back(&listener); }
 
   // Snapshot persistence (restart recovery). Load before any events arrive;
   // once a path is set, every order/trade event rewrites the file (tmp +
@@ -182,6 +186,13 @@ class OrderManager final : public td::TdClient {
   std::unordered_set<std::string> seen_trades_;
   // Refs the watchdog already canceled: one cancel request per order
   std::unordered_set<std::string> cancel_requested_;
+  // Σ applied (deduped) fill volume per order_ref; gates the delayed
+  // terminal-order effect until the fills the terminal announces have landed
+  std::unordered_map<std::string, std::int32_t> filled_;
+  // Terminal reports whose fills have not caught up yet; the effect fires
+  // from OnTdTrade once filled_[ref] reaches the announced volume_traded
+  std::unordered_map<std::string, td::OrderReport> pending_terminal_;
+  std::vector<OmsListener*> listeners_;  // assembly-time only
   std::string current_day_;
   std::optional<td::AccountReport> account_;
   std::filesystem::path snapshot_path_;  // empty = persistence off

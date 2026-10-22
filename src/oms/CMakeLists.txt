@@ -3,7 +3,8 @@ add_library(oms ${CTS_LIBRARY_TYPE})
 target_sources(
     oms
     PRIVATE checked_order_sink.cc order_manager.cc
-    PUBLIC FILE_SET HEADERS FILES checked_order_sink.h order_manager.h
+    PUBLIC FILE_SET HEADERS FILES checked_order_sink.h oms_listener.h
+                                  order_manager.h
 )
 
 target_link_libraries(
