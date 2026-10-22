@@ -27,8 +27,19 @@ td::Direction Opposite(td::Direction d) {
 
 }  // namespace
 
+void OrderManager::OnTdDisconnected(int /*reason*/) {
+  std::lock_guard lock(mutex_);
+  ready_ = false;  // a reconnect reopens the recovery window
+}
+
+void OrderManager::OnTdReady(bool success, std::string_view /*msg*/) {
+  std::lock_guard lock(mutex_);
+  ready_ = success;
+}
+
 void OrderManager::OnTdOrder(td::OrderReport const& order) {
   std::optional<td::OrderReport> effect;
+  std::shared_ptr<std::vector<td::PositionRow> const> applied_rows;
   {
     std::lock_guard lock(mutex_);
     // Any report (confirm or reject) finalizes the matching intent
@@ -39,7 +50,18 @@ void OrderManager::OnTdOrder(td::OrderReport const& order) {
     // but only trades touch the ledger (no double counting)
     auto const it = journal_.find(order.order_ref);
     if (it != journal_.end() && td::IsTerminal(it->second.report.status)) {
-      return;  // absorbed: no transition, no effect
+      // Terminal-vs-terminal (or terminal-vs-live) conflict: inside the
+      // recovery window the query answer is newer than any RESUME replay, so
+      // it overrides; once ready, the first terminal stands (docs ch.6.1)
+      bool const recovery_query =
+          !ready_ && order.source == td::ReportSource::kQuery;
+      if (!recovery_query) {
+        return;  // absorbed: no transition, no effect
+      }
+      SPDLOG_WARN(
+          "oms: recovery query overrides journal terminal {} -> {} for {}",
+          static_cast<int>(it->second.report.status),
+          static_cast<int>(order.status), order.order_ref);
     }
     auto& entry = journal_[order.order_ref];
     entry.report = order;
@@ -57,11 +79,17 @@ void OrderManager::OnTdOrder(td::OrderReport const& order) {
     } else {
       effect = order;
     }
+    applied_rows = ApplyPendingLocked();
     SaveLocked();
   }
   if (effect.has_value()) {
     for (auto* l : listeners_) {
       l->OnOrderUpdate(*effect);
+    }
+  }
+  if (applied_rows != nullptr) {
+    for (auto* l : listeners_) {
+      l->OnPositionsReconciled(applied_rows);
     }
   }
 }
@@ -167,6 +195,7 @@ void OrderManager::SweepStaleOrders(std::int64_t now_ms,
 
 void OrderManager::OnTdTrade(td::TradeReport const& trade) {
   std::optional<td::OrderReport> terminal_effect;
+  std::shared_ptr<std::vector<td::PositionRow> const> applied_rows;
   {
     std::lock_guard lock(mutex_);
     // Dedup on the exchange-side idempotency key: RESUME replay and reconnect
@@ -192,6 +221,7 @@ void OrderManager::OnTdTrade(td::TradeReport const& trade) {
       terminal_effect = it->second;
       pending_terminal_.erase(it);
     }
+    applied_rows = ApplyPendingLocked();
     SaveLocked();
   }
   for (auto* l : listeners_) {
@@ -202,54 +232,57 @@ void OrderManager::OnTdTrade(td::TradeReport const& trade) {
       l->OnOrderUpdate(*terminal_effect);
     }
   }
+  if (applied_rows != nullptr) {
+    for (auto* l : listeners_) {
+      l->OnPositionsReconciled(applied_rows);
+    }
+  }
+}
+
+bool OrderManager::QuiescentLocked() const {
+  if (!intents_.empty() || !pending_terminal_.empty()) {
+    return false;
+  }
+  for (auto const& [ref, entry] : journal_) {
+    if (!td::IsTerminal(entry.report.status)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::shared_ptr<std::vector<td::PositionRow> const>
+OrderManager::ApplyPendingLocked() {
+  if (!QuiescentLocked() ||
+      (pending_positions_ == nullptr && !pending_account_.has_value())) {
+    return nullptr;
+  }
+  auto rows = std::move(pending_positions_);
+  pending_positions_ = nullptr;
+  if (pending_account_.has_value()) {
+    account_ = *pending_account_;
+    pending_account_.reset();
+  }
+  if (rows != nullptr) {
+    ReconcileLocked(rows);
+  }
+  SPDLOG_INFO("oms: quiesced, deferred broker snapshot applied");
+  SaveLocked();
+  return rows;
 }
 
 void OrderManager::OnTdPositions(
     std::shared_ptr<std::vector<td::PositionRow> const> rows) {
   {
     std::lock_guard lock(mutex_);
-    // Broker snapshot is authoritative: adopt its buckets, warn on divergence.
-    // avg_price is NOT in the snapshot (PositionRow carries volumes only) --
-    // after a restart it stays approximate until new fills re-weight it
-    for (auto const& row : *rows) {
-      Key const key{row.instrument_id, row.direction};
-      auto& pos = ledger_[key];
-      if (pos.instrument_id.empty()) {
-        pos.instrument_id = row.instrument_id;
-        pos.side = row.direction;
-      }
-      if (pos.yd_volume != row.yd_volume ||
-          pos.today_volume != row.today_volume) {
-        SPDLOG_WARN(
-            "oms: reconcile {} {} local(today={} yd={}) broker(today={} "
-            "yd={}), adopting broker",
-            row.instrument_id,
-            row.direction == td::Direction::kBuy ? "long" : "short",
-            pos.today_volume, pos.yd_volume, row.today_volume, row.yd_volume);
-        pos.yd_volume = row.yd_volume;
-        pos.today_volume = row.today_volume;
-        if (pos.total() == 0) {
-          pos.avg_price = 0;
-        }
-      }
+    if (!QuiescentLocked()) {
+      // The snapshot's sample time is unknowable and may predate in-flight
+      // fills: defer until quiesce, keep only the latest (docs ch.6.2)
+      SPDLOG_INFO("oms: position snapshot deferred (orders in flight)");
+      pending_positions_ = std::move(rows);
+      return;
     }
-    // Ledger entries missing from the snapshot are flat at the broker
-    for (auto& [key, pos] : ledger_) {
-      bool const in_snapshot = std::any_of(
-          rows->begin(), rows->end(), [&](td::PositionRow const& row) {
-            return key.instrument_id == row.instrument_id &&
-                   key.side == row.direction;
-          });
-      if (!in_snapshot && pos.total() != 0) {
-        SPDLOG_WARN(
-            "oms: reconcile {} {} absent from broker snapshot, zeroing",
-            key.instrument_id,
-            key.side == td::Direction::kBuy ? "long" : "short");
-        pos.yd_volume = 0;
-        pos.today_volume = 0;
-        pos.avg_price = 0;
-      }
-    }
+    ReconcileLocked(rows);
     SaveLocked();
   }
   for (auto* l : listeners_) {
@@ -257,8 +290,57 @@ void OrderManager::OnTdPositions(
   }
 }
 
+void OrderManager::ReconcileLocked(
+    std::shared_ptr<std::vector<td::PositionRow> const> rows) {
+  // Broker snapshot is authoritative: adopt its buckets, warn on divergence.
+  // avg_price is NOT in the snapshot (PositionRow carries volumes only) --
+  // after a restart it stays approximate until new fills re-weight it
+  for (auto const& row : *rows) {
+    Key const key{row.instrument_id, row.direction};
+    auto& pos = ledger_[key];
+    if (pos.instrument_id.empty()) {
+      pos.instrument_id = row.instrument_id;
+      pos.side = row.direction;
+    }
+    if (pos.yd_volume != row.yd_volume ||
+        pos.today_volume != row.today_volume) {
+      SPDLOG_WARN(
+          "oms: reconcile {} {} local(today={} yd={}) broker(today={} "
+          "yd={}), adopting broker",
+          row.instrument_id,
+          row.direction == td::Direction::kBuy ? "long" : "short",
+          pos.today_volume, pos.yd_volume, row.today_volume, row.yd_volume);
+      pos.yd_volume = row.yd_volume;
+      pos.today_volume = row.today_volume;
+      if (pos.total() == 0) {
+        pos.avg_price = 0;
+      }
+    }
+  }
+  // Ledger entries missing from the snapshot are flat at the broker
+  for (auto& [key, pos] : ledger_) {
+    bool const in_snapshot = std::any_of(
+        rows->begin(), rows->end(), [&](td::PositionRow const& row) {
+          return key.instrument_id == row.instrument_id &&
+                 key.side == row.direction;
+        });
+    if (!in_snapshot && pos.total() != 0) {
+      SPDLOG_WARN("oms: reconcile {} {} absent from broker snapshot, zeroing",
+                  key.instrument_id,
+                  key.side == td::Direction::kBuy ? "long" : "short");
+      pos.yd_volume = 0;
+      pos.today_volume = 0;
+      pos.avg_price = 0;
+    }
+  }
+}
+
 void OrderManager::OnTdAccount(td::AccountReport const& account) {
   std::lock_guard lock(mutex_);
+  if (!QuiescentLocked()) {
+    pending_account_ = account;  // same gate as positions (docs ch.6.2)
+    return;
+  }
   account_ = account;
   SaveLocked();
 }

@@ -58,6 +58,15 @@ inline bool IsTerminal(OrderStatus s) {
          s == OrderStatus::kRejected;
 }
 
+// Which CTP flow delivered a report. The two flows share no sequence number,
+// so terminal-vs-terminal arbitration keys on this: inside the recovery
+// window (not ready) the query answer is authoritative; once ready, the
+// private stream is the only live source (docs/op-driven-transaction.md 6.1)
+enum class ReportSource : char {
+  kStream,  // OnRtnOrder push / RESUME replay (zero-init default)
+  kQuery,   // OnRspQryOrder answer
+};
+
 // Order state report, normalized from OnRtnOrder / OnRspOrderInsert /
 // OnErrRtnOrderInsert. order_ref correlates back to the request; front_id +
 // session_id + order_ref is the cancel key.
@@ -73,6 +82,7 @@ struct OrderReport {
   std::int32_t volume_traded;
   std::int32_t volume_total;  // remaining
   OrderStatus status;
+  ReportSource source;  // zero-init = kStream
   std::int32_t front_id;
   std::int32_t session_id;
 };

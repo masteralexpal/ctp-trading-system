@@ -91,8 +91,8 @@ class OrderManager final : public td::TdClient {
 
   // td::TdClient (td dispatch thread)
   void OnTdConnected() override {}
-  void OnTdDisconnected(int /*reason*/) override {}
-  void OnTdReady(bool /*success*/, std::string_view /*msg*/) override {}
+  void OnTdDisconnected(int /*reason*/) override;
+  void OnTdReady(bool success, std::string_view /*msg*/) override;
   void OnTdOrder(td::OrderReport const& order) override;
   void OnTdTrade(td::TradeReport const& trade) override;
   void OnTdPositions(
@@ -167,6 +167,15 @@ class OrderManager final : public td::TdClient {
   void ApplyTrade(td::TradeReport const& trade);
   int VolumeMultiple(std::string_view instrument_id) const;
   void SaveLocked();  // write the snapshot; mutex_ held, path set
+  void ReconcileLocked(
+      std::shared_ptr<std::vector<td::PositionRow> const> rows);
+  // No intents, no live journal orders, no pending terminal effects: safe to
+  // accept a broker snapshot (its sample time is unknowable, docs ch.6.2)
+  bool QuiescentLocked() const;
+  // Applies deferred snapshots if quiescent; returns the applied position
+  // rows for effect emission (nullptr = nothing applied). Account applies
+  // silently (no listener effect)
+  std::shared_ptr<std::vector<td::PositionRow> const> ApplyPendingLocked();
 
   struct Intent {
     std::string instrument_id;
@@ -180,6 +189,11 @@ class OrderManager final : public td::TdClient {
   std::unordered_map<std::string, OrderEntry> journal_;
   std::unordered_map<std::string, Intent> intents_;
   std::unordered_map<Key, Position, KeyHash> ledger_;
+  bool ready_{false};  // the td startup chain completed (under mutex_)
+  // Snapshots deferred by the quiesce gate (docs ch.6.2): applied once no
+  // intent, live order or pending terminal effect remains
+  std::shared_ptr<std::vector<td::PositionRow> const> pending_positions_;
+  std::optional<td::AccountReport> pending_account_;
   // Idempotency keys of applied trades: exchange_id|trading_day|trade_id.
   // In-memory only -- the RESUME replay seam is intra-process; a process
   // restart reconciles from the broker position snapshot instead

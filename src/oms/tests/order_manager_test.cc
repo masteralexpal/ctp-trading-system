@@ -5,6 +5,7 @@
  */
 #include "oms/order_manager.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -208,6 +209,104 @@ TEST(OrderManagerTest, InFlightExposureHandsOffFromIntentToJournal) {
   EXPECT_DOUBLE_EQ(e.notional, 3600.0);
 }
 
+class RecordingListener final : public OmsListener {
+ public:
+  std::vector<std::string> events;  // e.g. "order:1:4", "trade:T1"
+
+  void OnOrderUpdate(td::OrderReport const& report) override {
+    events.push_back("order:" + std::string(report.order_ref) + ":" +
+                     std::to_string(static_cast<int>(report.status)));
+  }
+  void OnTradeApplied(td::TradeReport const& trade) override {
+    events.push_back("trade:" + std::string(trade.trade_id));
+  }
+  void OnPositionsReconciled(
+      std::shared_ptr<std::vector<td::PositionRow> const>) override {
+    events.push_back("positions");
+  }
+};
+
+td::OrderReport MakeQueryOrder(std::string_view ref,
+                               std::string_view instrument,
+                               td::OrderStatus status,
+                               int total,
+                               int traded) {
+  auto r = MakeOrder(ref, instrument, status, total, traded);
+  r.source = td::ReportSource::kQuery;
+  return r;
+}
+
+// Recovery window (not ready): the query answer is newer than any RESUME
+// replay, so it overrides even a terminal journal entry (docs ch.6.1)
+TEST(OrderManagerTest, RecoveryQueryOverridesJournalTerminal) {
+  OrderManager oms;  // ready_ = false: the recovery window
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kCanceled, 2, 0));
+  oms.OnTdOrder(
+      MakeQueryOrder("1", "rb2701", td::OrderStatus::kAllTraded, 2, 2));
+  auto const orders = oms.orders();
+  ASSERT_EQ(orders.size(), 1);
+  EXPECT_EQ(orders[0].report.status, td::OrderStatus::kAllTraded);
+}
+
+// Once ready, the first terminal stands; a conflicting query row only warns
+TEST(OrderManagerTest, ReadyTerminalStandsAgainstQuery) {
+  OrderManager oms;
+  oms.OnTdReady(true, "");
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kCanceled, 2, 0));
+  oms.OnTdOrder(
+      MakeQueryOrder("1", "rb2701", td::OrderStatus::kAllTraded, 2, 2));
+  auto const orders = oms.orders();
+  ASSERT_EQ(orders.size(), 1);
+  EXPECT_EQ(orders[0].report.status, td::OrderStatus::kCanceled);
+}
+
+TEST(OrderManagerTest, SnapshotDefersWhileOrdersInFlight) {
+  OrderManager oms;
+  RecordingListener listener;
+  oms.AddListener(listener);
+  oms.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,
+                          3500, 2, "20261017"));
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kSubmitted, 1, 0));
+
+  // The snapshot may predate in-flight fills: deferred while not quiescent
+  auto rows = std::make_shared<std::vector<td::PositionRow>>();
+  oms.OnTdPositions(rows);  // broker says flat
+  auto const* p = FindPosition(oms.positions(), "rb2701", td::Direction::kBuy);
+  ASSERT_NE(p, nullptr);
+  EXPECT_EQ(p->total(), 2);  // ledger untouched
+  auto const positions_effects =
+      std::count(listener.events.begin(), listener.events.end(), "positions");
+  EXPECT_EQ(positions_effects, 0);  // but the positions effect is deferred
+
+  // Quiesce: the deferred snapshot applies, effect fires then
+  oms.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kCanceled, 1, 0));
+  p = FindPosition(oms.positions(), "rb2701", td::Direction::kBuy);
+  EXPECT_TRUE(p == nullptr || p->total() == 0);
+  EXPECT_EQ(listener.events.back(), "positions");
+}
+
+TEST(OrderManagerTest, AccountDefersWhileIntentPending) {
+  OrderManager oms;
+  oms.RegisterIntent(
+      MakeRequest("rb2701", td::Direction::kBuy, td::Offset::kOpen, 3500, 1),
+      "7");
+  td::AccountReport account{};
+  account.balance = 12345;
+  oms.OnTdAccount(account);
+  EXPECT_FALSE(oms.account().has_value());  // gated
+
+  oms.OnTdOrder(MakeOrder("7", "rb2701", td::OrderStatus::kSubmitted, 1, 0));
+  // A live journal order still blocks quiesce
+  EXPECT_FALSE(oms.account().has_value());
+  oms.OnTdOrder(MakeOrder("7", "rb2701", td::OrderStatus::kAllTraded, 1, 1));
+  // Terminal announces a fill that has not arrived: still gated
+  EXPECT_FALSE(oms.account().has_value());
+  oms.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,
+                          3500, 1, "20261017", "7", "T1"));
+  ASSERT_TRUE(oms.account().has_value());  // quiesced: deferred account applied
+  EXPECT_DOUBLE_EQ(oms.account()->balance, 12345);
+}
+
 TEST(OrderManagerTest, StaleLiveOrderIsCanceledOnce) {
   OrderManager oms;
   FakeCancelSink sink;
@@ -238,23 +337,6 @@ TEST(OrderManagerTest, TerminalOrdersAreNeverSwept) {
   oms.SweepStaleOrders(t0 + 99999, sink, std::chrono::milliseconds{500});
   EXPECT_TRUE(sink.canceled.empty());
 }
-
-class RecordingListener final : public OmsListener {
- public:
-  std::vector<std::string> events;  // e.g. "order:1:4", "trade:T1"
-
-  void OnOrderUpdate(td::OrderReport const& report) override {
-    events.push_back("order:" + std::string(report.order_ref) + ":" +
-                     std::to_string(static_cast<int>(report.status)));
-  }
-  void OnTradeApplied(td::TradeReport const& trade) override {
-    events.push_back("trade:" + std::string(trade.trade_id));
-  }
-  void OnPositionsReconciled(
-      std::shared_ptr<std::vector<td::PositionRow> const>) override {
-    events.push_back("positions");
-  }
-};
 
 TEST(OrderManagerTest, EffectsPreserveArrivalOrder) {
   OrderManager oms;

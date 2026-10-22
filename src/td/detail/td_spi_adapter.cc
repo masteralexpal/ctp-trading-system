@@ -203,7 +203,8 @@ void TdSpiAdapter::OnRspQryOrder(CThostFtdcOrderField* order,
     return;
   }
   if (order != nullptr) {
-    OrderReport const report = OrderReportFromCtp(*order);
+    OrderReport report = OrderReportFromCtp(*order);
+    report.source = ReportSource::kQuery;  // recovery-window authoritative
     if (IsAliveStatus(order->OrderStatus)) {
       UpsertCancelKey(report);
     }
