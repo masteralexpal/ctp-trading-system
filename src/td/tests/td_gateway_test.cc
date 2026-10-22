@@ -566,6 +566,19 @@ TEST_F(TdGatewayTest, QueriedTerminalOrderGetsNoCancelKey) {
   EXPECT_EQ(gateway.CancelOrder("000000000051"), -1);
 }
 
+TEST_F(TdGatewayTest, QueriedNotQueueingOrderRegainsItsCancelKey) {
+  Connect();
+  // NotQueueing is NOT terminal: the exchange pulled the order out of the
+  // matching queue (session break), but it stays valid and cancellable
+  auto const alive =
+      MakeOrderField("000000000053", THOST_FTDC_OST_NoTradeNotQueueing);
+  auto const part =
+      MakeOrderField("000000000054", THOST_FTDC_OST_PartTradedNotQueueing);
+  ReadyUp(0, {alive, part});
+  EXPECT_EQ(gateway.CancelOrder("000000000053"), 0);
+  EXPECT_EQ(gateway.CancelOrder("000000000054"), 0);
+}
+
 TEST_F(TdGatewayTest, RtnOrderAdoptsUnknownAliveRef) {
   Connect();
   ReadyUp();

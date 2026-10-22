@@ -20,14 +20,14 @@ namespace cts::td::detail {
 namespace {
 
 // Exchange-terminal statuses: the order is dead, no cancel key needed.
-// Everything else (queueing, not-touched, touched, unknown) is treated as
-// alive -- a spurious key is harmless, a missing one is not
+// Everything else (queueing, not-queueing, unknown) is treated as alive --
+// NotQueueing only means the exchange pulled the order out of the matching
+// queue during a session break; it stays valid and cancellable. A spurious
+// key is harmless, a missing one is not
 bool IsAliveStatus(TThostFtdcOrderStatusType s) {
   switch (s) {
     case THOST_FTDC_OST_AllTraded:
     case THOST_FTDC_OST_Canceled:
-    case THOST_FTDC_OST_NoTradeNotQueueing:
-    case THOST_FTDC_OST_PartTradedNotQueueing:
       return false;
     default:
       return true;
