@@ -2,8 +2,8 @@ add_library(oms ${CTS_LIBRARY_TYPE})
 
 target_sources(
     oms
-    PRIVATE checked_order_sink.cc order_manager.cc
-    PUBLIC FILE_SET HEADERS FILES checked_order_sink.h oms_listener.h
+    PRIVATE checked_order_sink.cc op_log.cc order_manager.cc
+    PUBLIC FILE_SET HEADERS FILES checked_order_sink.h oms_listener.h op_log.h
                                   order_manager.h
 )
 
@@ -19,6 +19,7 @@ if(CTS_ENABLE_UNIT_TESTS)
     add_executable(
         oms_test
         tests/checked_order_sink_test.cc
+        tests/op_log_test.cc
         tests/order_manager_property_test.cc
         tests/order_manager_test.cc
     )
@@ -33,7 +34,8 @@ if(CTS_ENABLE_FUZZERS)
     endif()
     # order_manager.cc is compiled INTO the harness so coverage guidance and
     # sanitizers reach the fold logic itself; component libs resolve the rest
-    add_executable(oms_fuzz tests/order_manager_fuzz.cc order_manager.cc)
+    add_executable(oms_fuzz tests/order_manager_fuzz.cc op_log.cc
+                   order_manager.cc)
     target_link_libraries(
         oms_fuzz
         PRIVATE cts::config cts::base cts::instrument cts::session cts::td

@@ -25,6 +25,15 @@ td::Direction Opposite(td::Direction d) {
   return d == td::Direction::kBuy ? td::Direction::kSell : td::Direction::kBuy;
 }
 
+std::string TradeKeyOf(td::TradeReport const& trade) {
+  std::string key = trade.exchange_id;
+  key += '|';
+  key += trade.trading_day;
+  key += '|';
+  key += trade.trade_id;
+  return key;
+}
+
 }  // namespace
 
 void OrderManager::OnTdDisconnected(int /*reason*/) {
@@ -35,6 +44,56 @@ void OrderManager::OnTdDisconnected(int /*reason*/) {
 void OrderManager::OnTdReady(bool success, std::string_view /*msg*/) {
   std::lock_guard lock(mutex_);
   ready_ = success;
+  if (success && !intents_.empty()) {
+    // Terminal verdict #4 (snapshot absence): the recovery query answered and
+    // no row claimed these intents -- they evaporated in the disconnect
+    for (auto const& [ref, in] : intents_) {
+      SPDLOG_WARN("oms: intent {} for {} evaporated in the disconnect, "
+                  "discarding",
+                  ref, in.instrument_id);
+    }
+    intents_.clear();
+  }
+}
+
+OrderManager::OrderFold OrderManager::FoldOrderLocked(
+    td::OrderReport const& order) {
+  // Any report (confirm or reject) finalizes the matching intent
+  intents_.erase(order.order_ref);
+  // Latest report wins among live states; terminal states absorb everything
+  // that arrives after them (replay, unordered sources). CTP fires the
+  // all-traded report BEFORE the trade reports -- the journal reflects it,
+  // but only trades touch the ledger (no double counting)
+  auto const it = journal_.find(order.order_ref);
+  if (it != journal_.end() && td::IsTerminal(it->second.report.status)) {
+    // Terminal-vs-terminal (or terminal-vs-live) conflict: inside the
+    // recovery window the query answer is newer than any RESUME replay, so
+    // it overrides; once ready, the first terminal stands (docs ch.6.1)
+    bool const recovery_query =
+        !ready_ && order.source == td::ReportSource::kQuery;
+    if (!recovery_query) {
+      return {.accepted = false, .effect = std::nullopt};
+    }
+    SPDLOG_WARN(
+        "oms: recovery query overrides journal terminal {} -> {} for {}",
+        static_cast<int>(it->second.report.status),
+        static_cast<int>(order.status), order.order_ref);
+  }
+  auto& entry = journal_[order.order_ref];
+  entry.report = order;
+  entry.updated_epoch_ms = base::NowEpochMs();
+  if (!td::IsTerminal(order.status)) {
+    return {.accepted = true, .effect = order};
+  }
+  cancel_requested_.erase(order.order_ref);  // the ref is settled
+  // CTP announces terminal states BEFORE the trailing trade details:
+  // delay the effect until the announced fills have been applied, so a
+  // listener never sees "flight over" before the ledger shows the fills
+  if (order.volume_traded > filled_[order.order_ref]) {
+    pending_terminal_[order.order_ref] = order;
+    return {.accepted = true, .effect = std::nullopt};
+  }
+  return {.accepted = true, .effect = order};
 }
 
 void OrderManager::OnTdOrder(td::OrderReport const& order) {
@@ -42,45 +101,16 @@ void OrderManager::OnTdOrder(td::OrderReport const& order) {
   std::shared_ptr<std::vector<td::PositionRow> const> applied_rows;
   {
     std::lock_guard lock(mutex_);
-    // Any report (confirm or reject) finalizes the matching intent
-    intents_.erase(order.order_ref);
-    // Latest report wins among live states; terminal states absorb everything
-    // that arrives after them (replay, unordered sources). CTP fires the
-    // all-traded report BEFORE the trade reports -- the journal reflects it,
-    // but only trades touch the ledger (no double counting)
-    auto const it = journal_.find(order.order_ref);
-    if (it != journal_.end() && td::IsTerminal(it->second.report.status)) {
-      // Terminal-vs-terminal (or terminal-vs-live) conflict: inside the
-      // recovery window the query answer is newer than any RESUME replay, so
-      // it overrides; once ready, the first terminal stands (docs ch.6.1)
-      bool const recovery_query =
-          !ready_ && order.source == td::ReportSource::kQuery;
-      if (!recovery_query) {
-        return;  // absorbed: no transition, no effect
-      }
-      SPDLOG_WARN(
-          "oms: recovery query overrides journal terminal {} -> {} for {}",
-          static_cast<int>(it->second.report.status),
-          static_cast<int>(order.status), order.order_ref);
+    auto const fold = FoldOrderLocked(order);
+    if (!fold.accepted) {
+      return;  // absorbed: no transition, no log, no effect
     }
-    auto& entry = journal_[order.order_ref];
-    entry.report = order;
-    entry.updated_epoch_ms = base::NowEpochMs();
-    if (td::IsTerminal(order.status)) {
-      cancel_requested_.erase(order.order_ref);  // the ref is settled
-      // CTP announces terminal states BEFORE the trailing trade details:
-      // delay the effect until the announced fills have been applied, so a
-      // listener never sees "flight over" before the ledger shows the fills
-      if (order.volume_traded > filled_[order.order_ref]) {
-        pending_terminal_[order.order_ref] = order;
-      } else {
-        effect = order;
-      }
-    } else {
-      effect = order;
+    op_log_.AppendOrder(order);
+    if (!op_log_.open()) {
+      SaveLocked();  // no log: snapshot stays the per-event record
     }
+    effect = fold.effect;
     applied_rows = ApplyPendingLocked();
-    SaveLocked();
   }
   if (effect.has_value()) {
     for (auto* l : listeners_) {
@@ -94,6 +124,17 @@ void OrderManager::OnTdOrder(td::OrderReport const& order) {
   }
 }
 
+void OrderManager::RegisterIntentLocked(td::OrderRequest const& req,
+                                        std::string_view order_ref) {
+  Intent in;
+  in.instrument_id = req.instrument_id;
+  in.direction = req.direction;
+  in.offset = req.offset;
+  in.volume = req.volume;
+  in.limit_price = req.limit_price;
+  intents_.emplace(order_ref, std::move(in));
+}
+
 void OrderManager::RegisterIntent(td::OrderRequest const& req,
                                   std::string_view order_ref) {
   std::lock_guard lock(mutex_);
@@ -102,13 +143,8 @@ void OrderManager::RegisterIntent(td::OrderRequest const& req,
   if (order_ref.empty() || journal_.contains(std::string(order_ref))) {
     return;
   }
-  Intent in;
-  in.instrument_id = req.instrument_id;
-  in.direction = req.direction;
-  in.offset = req.offset;
-  in.volume = req.volume;
-  in.limit_price = req.limit_price;
-  intents_.emplace(order_ref, std::move(in));
+  RegisterIntentLocked(req, order_ref);
+  op_log_.AppendIntent(order_ref, req);
 }
 
 bool OrderManager::HasIntent(std::string_view order_ref) const {
@@ -193,36 +229,44 @@ void OrderManager::SweepStaleOrders(std::int64_t now_ms,
   }
 }
 
+OrderManager::TradeFold OrderManager::FoldTradeLocked(
+    td::TradeReport const& trade) {
+  // Dedup on the exchange-side idempotency key: RESUME replay and reconnect
+  // re-deliver trades. An empty trade_id cannot be told apart, so it is
+  // always applied (pre-dedup behavior)
+  if (trade.trade_id[0] != '\0' &&
+      !seen_trades_.insert(TradeKeyOf(trade)).second) {
+    return {.applied = false, .terminal_effect = std::nullopt};
+  }
+  RollTradingDay(trade.trading_day);
+  ApplyTrade(trade);
+  filled_[trade.order_ref] += trade.volume;
+  // Release a delayed terminal effect once its announced fills have landed
+  if (auto const it = pending_terminal_.find(trade.order_ref);
+      it != pending_terminal_.end() &&
+      filled_[trade.order_ref] >= it->second.volume_traded) {
+    auto const terminal = it->second;
+    pending_terminal_.erase(it);
+    return {.applied = true, .terminal_effect = terminal};
+  }
+  return {.applied = true, .terminal_effect = std::nullopt};
+}
+
 void OrderManager::OnTdTrade(td::TradeReport const& trade) {
   std::optional<td::OrderReport> terminal_effect;
   std::shared_ptr<std::vector<td::PositionRow> const> applied_rows;
   {
     std::lock_guard lock(mutex_);
-    // Dedup on the exchange-side idempotency key: RESUME replay and reconnect
-    // re-deliver trades. An empty trade_id cannot be told apart, so it is
-    // always applied (pre-dedup behavior)
-    if (trade.trade_id[0] != '\0') {
-      std::string key = trade.exchange_id;
-      key += '|';
-      key += trade.trading_day;
-      key += '|';
-      key += trade.trade_id;
-      if (!seen_trades_.insert(std::move(key)).second) {
-        return;  // replay: no ledger change, no effect
-      }
+    auto const fold = FoldTradeLocked(trade);
+    if (!fold.applied) {
+      return;  // replay: no ledger change, no log, no effect
     }
-    RollTradingDay(trade.trading_day);
-    ApplyTrade(trade);
-    filled_[trade.order_ref] += trade.volume;
-    // Release a delayed terminal effect once its announced fills have landed
-    if (auto const it = pending_terminal_.find(trade.order_ref);
-        it != pending_terminal_.end() &&
-        filled_[trade.order_ref] >= it->second.volume_traded) {
-      terminal_effect = it->second;
-      pending_terminal_.erase(it);
+    op_log_.AppendTrade(trade);
+    if (!op_log_.open()) {
+      SaveLocked();
     }
+    terminal_effect = fold.terminal_effect;
     applied_rows = ApplyPendingLocked();
-    SaveLocked();
   }
   for (auto* l : listeners_) {
     l->OnTradeApplied(trade);
@@ -426,6 +470,10 @@ void OrderManager::RollTradingDay(std::string_view day) {
       pos.yd_volume += pos.today_volume;
       pos.today_volume = 0;
     }
+    // Checkpoint: the snapshot subsumes the whole log of the closed day
+    // (RESUME never replays across days, so the tail is safe to drop)
+    SaveLocked();
+    op_log_.Reset();
     SPDLOG_INFO("oms: trading day {} -> {}, buckets rolled", current_day_, day);
   }
   current_day_ = day;
@@ -498,6 +546,11 @@ void OrderManager::SetSnapshotPath(std::filesystem::path path) {
   snapshot_path_ = std::move(path);
 }
 
+void OrderManager::SetOpLogPath(std::filesystem::path path) {
+  std::lock_guard lock(mutex_);
+  op_log_.Open(std::move(path));
+}
+
 void OrderManager::SaveSnapshot() {
   std::lock_guard lock(mutex_);
   SaveLocked();
@@ -514,7 +567,10 @@ void OrderManager::SaveLocked() {
     SPDLOG_WARN("oms: snapshot open failed: {}", tmp);
     return;
   }
-  std::fprintf(f, "CTSOMS 1\n");
+  std::fprintf(f, "CTSOMS 2\n");
+  // The snapshot subsumes the op log up to this offset; replay starts after it
+  std::fprintf(f, "logoff %llu\n",
+               static_cast<unsigned long long>(op_log_.size()));
   // Empty day (no trade seen yet) would write "day " which the strict
   // loader rejects; omit the line instead
   if (!current_day_.empty()) {
@@ -571,26 +627,33 @@ std::vector<std::string_view> SplitLine(std::string_view line) {
 
 bool OrderManager::LoadSnapshot() {
   std::lock_guard lock(mutex_);
-  if (snapshot_path_.empty()) {
-    return false;
-  }
-  FILE* f = std::fopen(snapshot_path_.c_str(), "r");
-  if (f == nullptr) {
-    return false;  // fresh start
-  }
-  std::string content;
-  char buf[4096];
-  while (std::size_t const n = std::fread(buf, 1, sizeof(buf), f)) {
-    content.append(buf, n);
-  }
-  std::fclose(f);
-
   journal_.clear();
   ledger_.clear();
+  intents_.clear();
+  seen_trades_.clear();
+  filled_.clear();
+  pending_terminal_.clear();
+  cancel_requested_.clear();
   current_day_.clear();
   account_.reset();
 
+  std::uint64_t logoff = 0;
+  std::string content;
+  bool snapshot_found = false;
+  if (!snapshot_path_.empty()) {
+    FILE* f = std::fopen(snapshot_path_.c_str(), "r");
+    if (f != nullptr) {
+      snapshot_found = true;
+      char buf[4096];
+      while (std::size_t const n = std::fread(buf, 1, sizeof(buf), f)) {
+        content.append(buf, n);
+      }
+      std::fclose(f);
+    }
+  }
+
   bool ok = true;
+  int version = 0;
   std::string_view rest = content;
   bool first_line = true;
   while (!rest.empty()) {
@@ -602,8 +665,14 @@ bool OrderManager::LoadSnapshot() {
     }
     if (first_line) {
       first_line = false;
-      if (line != "CTSOMS 1") {
+      if (line == "CTSOMS 1") {
+        version = 1;  // pre-op-log era: no logoff, nothing to replay against
+      } else if (line == "CTSOMS 2") {
+        version = 2;
+      } else {
+        // Corrupt snapshot: the log alone is the recovery record then
         SPDLOG_WARN("oms: bad snapshot header: {}", line);
+        ReplayLogLocked(0);
         return false;
       }
       continue;
@@ -612,7 +681,9 @@ bool OrderManager::LoadSnapshot() {
       break;
     }
     auto const tok = SplitLine(line);
-    if (tok[0] == "day" && tok.size() == 2) {
+    if (tok[0] == "logoff" && tok.size() == 2 && version == 2) {
+      ok &= ParseNum(tok[1], logoff);
+    } else if (tok[0] == "day" && tok.size() == 2) {
       current_day_ = std::string(tok[1]);
     } else if (tok[0] == "account" && tok.size() == 7) {
       td::AccountReport acc{};
@@ -674,7 +745,45 @@ bool OrderManager::LoadSnapshot() {
   }
   SPDLOG_INFO("oms: snapshot loaded: {} positions, {} orders, day {}",
               ledger_.size(), journal_.size(), current_day_);
-  return true;
+  ReplayLogLocked(logoff);
+  return snapshot_found;
+}
+
+// Recovery join: snapshot + log tail. Records before logoff are already inside
+// the snapshot -- only their trade keys re-enter the dedup set (live RESUME
+// replay protection). Records from logoff on fold through the SAME paths as
+// live events; idempotency makes the join exact
+void OrderManager::ReplayLogLocked(std::uint64_t logoff) {
+  if (!op_log_.open()) {
+    return;
+  }
+  std::size_t replayed = 0;
+  op_log_.ForEach(
+      [&](std::uint64_t offset, td::OrderReport const& order) {
+        if (offset >= logoff) {
+          FoldOrderLocked(order);
+          ++replayed;
+        }
+      },
+      [&](std::uint64_t offset, td::TradeReport const& trade) {
+        if (offset >= logoff) {
+          FoldTradeLocked(trade);
+          ++replayed;
+        } else if (trade.trade_id[0] != '\0') {
+          seen_trades_.insert(TradeKeyOf(trade));
+        }
+      },
+      [&](std::uint64_t /*offset*/, std::string_view ref,
+          td::OrderRequest const& req) {
+        // Re-register regardless of offset: a confirm already in the snapshot
+        // journal makes this a no-op, a lost one rides to the ready-verdict
+        if (!journal_.contains(std::string(ref))) {
+          RegisterIntentLocked(req, ref);
+        }
+      });
+  if (replayed > 0) {
+    SPDLOG_INFO("oms: replayed {} ops from the log tail", replayed);
+  }
 }
 
 }  // namespace cts::oms

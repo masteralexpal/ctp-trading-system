@@ -307,6 +307,114 @@ TEST(OrderManagerTest, AccountDefersWhileIntentPending) {
   EXPECT_DOUBLE_EQ(oms.account()->balance, 12345);
 }
 
+struct TempState {
+  explicit TempState(std::string_view name)
+      : snapshot(std::filesystem::temp_directory_path() /
+                 ("cts_oms_" + std::string(name) + ".txt")),
+        log(std::filesystem::temp_directory_path() /
+            ("cts_oms_" + std::string(name) + ".log")) {
+    std::filesystem::remove(snapshot);
+    std::filesystem::remove(log);
+  }
+  ~TempState() {
+    std::filesystem::remove(snapshot);
+    std::filesystem::remove(log);
+  }
+  std::filesystem::path const snapshot;
+  std::filesystem::path const log;
+};
+
+// kill -9 seam: no shutdown snapshot, the op log alone rebuilds the state
+TEST(OrderManagerTest, LogTailReplayRestoresUnsnapshottedOps) {
+  TempState tmp("replay");
+  {
+    OrderManager a;
+    a.SetSnapshotPath(tmp.snapshot);
+    a.SetOpLogPath(tmp.log);
+    a.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kSubmitted, 2, 0));
+    a.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,
+                          3500, 2, "20261017", "1", "T1"));
+    a.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kAllTraded, 2, 2));
+    // crash: dtor without SaveSnapshot; the log is the only record
+  }
+  OrderManager b;
+  b.SetSnapshotPath(tmp.snapshot);
+  b.SetOpLogPath(tmp.log);
+  EXPECT_FALSE(b.LoadSnapshot());  // no snapshot file...
+  auto const* p = FindPosition(b.positions(), "rb2701", td::Direction::kBuy);
+  ASSERT_NE(p, nullptr);
+  EXPECT_EQ(p->today_volume, 2);  // ...but the log replayed
+  EXPECT_DOUBLE_EQ(p->avg_price, 3500);
+  EXPECT_EQ(b.trading_day(), "20261017");
+  ASSERT_EQ(b.orders().size(), 1u);
+  EXPECT_EQ(b.orders()[0].report.status, td::OrderStatus::kAllTraded);
+
+  // The RESUME seam after the restart: the same trade must not double-count
+  b.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,
+                        3500, 2, "20261017", "1", "T1"));
+  p = FindPosition(b.positions(), "rb2701", td::Direction::kBuy);
+  ASSERT_NE(p, nullptr);
+  EXPECT_EQ(p->today_volume, 2);
+}
+
+// The convergence law: snapshot + log tail == full log replay == live state
+TEST(OrderManagerTest, SnapshotPlusLogTailEqualsFullReplay) {
+  TempState tmp("join");
+  {
+    OrderManager a;
+    a.SetSnapshotPath(tmp.snapshot);
+    a.SetOpLogPath(tmp.log);
+    a.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kSubmitted, 2, 0));
+    a.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,
+                          3500, 1, "20261017", "1", "T1"));
+    a.SaveSnapshot();  // checkpoint: snapshot subsumes the log so far
+    a.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,
+                          3520, 1, "20261017", "1", "T2"));
+    a.OnTdOrder(MakeOrder("1", "rb2701", td::OrderStatus::kAllTraded, 2, 2));
+  }
+  OrderManager b;  // snapshot + tail
+  b.SetSnapshotPath(tmp.snapshot);
+  b.SetOpLogPath(tmp.log);
+  EXPECT_TRUE(b.LoadSnapshot());
+
+  OrderManager c;  // full replay, no snapshot
+  c.SetSnapshotPath(tmp.snapshot.parent_path() / "cts_oms_join_absent.txt");
+  c.SetOpLogPath(tmp.log);
+  EXPECT_FALSE(c.LoadSnapshot());
+
+  for (auto* om : {&b, &c}) {
+    auto const* p =
+        FindPosition(om->positions(), "rb2701", td::Direction::kBuy);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->today_volume, 2);
+    EXPECT_DOUBLE_EQ(p->avg_price, 3510);  // (3500 + 3520) / 2, full fidelity
+    EXPECT_EQ(om->trading_day(), "20261017");
+    ASSERT_EQ(om->orders().size(), 1u);
+    EXPECT_EQ(om->orders()[0].report.status, td::OrderStatus::kAllTraded);
+  }
+}
+
+// Terminal verdict #4: an intent replayed from the log that the recovery
+// query never claims evaporated in the disconnect -- discarded at ready
+TEST(OrderManagerTest, EvaporatedIntentDiscardedAtReady) {
+  TempState tmp("evaporate");
+  {
+    OrderManager a;
+    a.SetSnapshotPath(tmp.snapshot);
+    a.SetOpLogPath(tmp.log);
+    a.RegisterIntent(
+        MakeRequest("rb2701", td::Direction::kBuy, td::Offset::kOpen, 3500, 1),
+        "000000000007");
+  }
+  OrderManager b;
+  b.SetSnapshotPath(tmp.snapshot);
+  b.SetOpLogPath(tmp.log);
+  b.LoadSnapshot();
+  EXPECT_TRUE(b.HasIntent("000000000007"));  // restored by the replay
+  b.OnTdReady(true, "");  // the query answered; no row claimed the intent
+  EXPECT_FALSE(b.HasIntent("000000000007"));
+}
+
 TEST(OrderManagerTest, StaleLiveOrderIsCanceledOnce) {
   OrderManager oms;
   FakeCancelSink sink;

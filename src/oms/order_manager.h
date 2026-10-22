@@ -23,6 +23,7 @@
 
 #include "instrument/instrument_master.h"
 #include "oms/oms_listener.h"
+#include "oms/op_log.h"
 #include "td/td_client.h"
 
 namespace cts::base {
@@ -80,12 +81,13 @@ class OrderManager final : public td::TdClient {
   // The effects output channel. Register at assembly, before events flow
   void AddListener(OmsListener& listener) { listeners_.push_back(&listener); }
 
-  // Snapshot persistence (restart recovery). Load before any events arrive;
-  // once a path is set, every order/trade event rewrites the file (tmp +
-  // rename; tiny file, event rate is low). The broker snapshot still wins at
-  // reconcile -- local state restores what the broker lacks: avg_price,
-  // realized_pnl, the order journal
+  // Snapshot persistence (restart recovery). The op log is the per-event
+  // record; the snapshot checkpoints it (day roll, shutdown) and stores the
+  // log offset it subsumes. Recovery = snapshot + log tail replay; replay is
+  // a no-op over snapshotted ops (the fold is idempotent). Without an op log
+  // path the snapshot falls back to per-event writes
   void SetSnapshotPath(std::filesystem::path path);
+  void SetOpLogPath(std::filesystem::path path);
   bool LoadSnapshot();  // false on missing/corrupt file (fresh start)
   void SaveSnapshot();  // public for the explicit shutdown save
 
@@ -167,6 +169,21 @@ class OrderManager final : public td::TdClient {
   void ApplyTrade(td::TradeReport const& trade);
   int VolumeMultiple(std::string_view instrument_id) const;
   void SaveLocked();  // write the snapshot; mutex_ held, path set
+  // The shared fold: the public handlers and the log replay both funnel here.
+  // accepted=false means absorbed/replayed -- no log append, no effect
+  struct OrderFold {
+    bool accepted;
+    std::optional<td::OrderReport> effect;
+  };
+  OrderFold FoldOrderLocked(td::OrderReport const& order);
+  struct TradeFold {
+    bool applied;
+    std::optional<td::OrderReport> terminal_effect;
+  };
+  TradeFold FoldTradeLocked(td::TradeReport const& trade);
+  void RegisterIntentLocked(td::OrderRequest const& req,
+                            std::string_view order_ref);
+  void ReplayLogLocked(std::uint64_t logoff);
   void ReconcileLocked(
       std::shared_ptr<std::vector<td::PositionRow> const> rows);
   // No intents, no live journal orders, no pending terminal effects: safe to
@@ -210,6 +227,7 @@ class OrderManager final : public td::TdClient {
   std::string current_day_;
   std::optional<td::AccountReport> account_;
   std::filesystem::path snapshot_path_;  // empty = persistence off
+  OpLog op_log_;
   std::atomic<std::shared_ptr<instrument::InstrumentMaster const>> master_;
 };
 

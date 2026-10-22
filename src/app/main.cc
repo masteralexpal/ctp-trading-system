@@ -178,6 +178,7 @@ int RunTrading(cts::app::AppConfig const& cfg) {
   // any event arrives; the broker reconcile stays authoritative on volumes
   std::filesystem::create_directories(cfg.state_dir);
   order_manager.SetSnapshotPath(cfg.state_dir + "/oms.txt");
+  order_manager.SetOpLogPath(cfg.state_dir + "/oms.log");
   order_manager.LoadSnapshot();
   cts::td::TdDispatcher td_dispatcher;
   td_dispatcher.AddClient(td_client);
