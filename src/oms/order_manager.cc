@@ -43,6 +43,19 @@ void OrderManager::OnTdOrder(td::OrderReport const& order) {
 
 void OrderManager::OnTdTrade(td::TradeReport const& trade) {
   std::lock_guard lock(mutex_);
+  // Dedup on the exchange-side idempotency key: RESUME replay and reconnect
+  // re-deliver trades. An empty trade_id cannot be told apart, so it is
+  // always applied (pre-dedup behavior)
+  if (trade.trade_id[0] != '\0') {
+    std::string key = trade.exchange_id;
+    key += '|';
+    key += trade.trading_day;
+    key += '|';
+    key += trade.trade_id;
+    if (!seen_trades_.insert(std::move(key)).second) {
+      return;
+    }
+  }
   RollTradingDay(trade.trading_day);
   ApplyTrade(trade);
   SaveLocked();

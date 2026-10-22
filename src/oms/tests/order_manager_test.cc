@@ -5,6 +5,7 @@
  */
 #include "oms/order_manager.h"
 
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -41,12 +42,20 @@ td::TradeReport MakeTrade(std::string_view instrument,
                           double price,
                           int volume,
                           std::string_view trading_day,
-                          std::string_view ref = "1") {
+                          std::string_view ref = "1",
+                          std::string_view trade_id = "") {
   td::TradeReport t{};
   std::memcpy(t.instrument_id, instrument.data(), instrument.size());
   std::memcpy(t.exchange_id, "SHFE", 5);
   std::memcpy(t.order_ref, ref.data(), ref.size());
-  std::memcpy(t.trade_id, "t1", 3);
+  // Auto-generate a unique id per call (dedup would collapse equal ids);
+  // pass an explicit id to test replay
+  if (trade_id.empty()) {
+    static int next = 0;
+    std::snprintf(t.trade_id, sizeof(t.trade_id), "auto%d", next++);
+  } else {
+    std::memcpy(t.trade_id, trade_id.data(), trade_id.size());
+  }
   std::memcpy(t.trading_day, trading_day.data(), trading_day.size());
   t.direction = direction;
   t.offset = offset;
@@ -121,6 +130,19 @@ TEST(OrderManagerTest, OpenFillAddsTodayBucket) {
   EXPECT_EQ(p->yd_volume, 0);
   EXPECT_DOUBLE_EQ(p->avg_price, (3500 * 2 + 3520) / 3.0);
   EXPECT_EQ(oms.trading_day(), "20261017");
+}
+
+TEST(OrderManagerTest, ReplayedTradeDoesNotDoubleCount) {
+  OrderManager oms;
+  auto const t = MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,
+                           3500, 2, "20261017", "1", "T123");
+  oms.OnTdTrade(t);
+  oms.OnTdTrade(t);  // RESUME replay
+
+  auto const* p =
+      FindPosition(oms.positions(), "rb2701", td::Direction::kBuy);
+  ASSERT_NE(p, nullptr);
+  EXPECT_EQ(p->today_volume, 2);
 }
 
 TEST(OrderManagerTest, TradingDayRollFlipsBuckets) {

@@ -99,12 +99,6 @@ cts::td::OrderReport DecodeOrder(ByteReader& br) {
   return r;
 }
 
-bool IsTerminal(cts::td::OrderStatus s) {
-  return s == cts::td::OrderStatus::kAllTraded ||
-         s == cts::td::OrderStatus::kCanceled ||
-         s == cts::td::OrderStatus::kRejected;
-}
-
 }  // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const* data,
@@ -135,7 +129,7 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const* data,
       }
       raw.OnTdOrder(r);
       dedup.OnTdOrder(r);
-      if (IsTerminal(r.status)) {
+      if (cts::td::IsTerminal(r.status)) {
         terminal_seen[r.order_ref] = true;
       }
     }
@@ -167,7 +161,7 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const* data,
   // Law 2 (terminal absorption): a terminal order must stay terminal
   for (auto const& entry : raw.orders()) {
     if (terminal_seen.count(entry.report.order_ref) != 0) {
-      CheckLaw(IsTerminal(entry.report.status),
+      CheckLaw(cts::td::IsTerminal(entry.report.status),
                "terminal order resurrected by a stale report");
     }
   }

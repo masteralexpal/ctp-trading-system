@@ -17,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "instrument/instrument_master.h"
@@ -130,6 +131,10 @@ class OrderManager final : public td::TdClient {
   mutable std::mutex mutex_;
   std::unordered_map<std::string, OrderEntry> journal_;
   std::unordered_map<Key, Position, KeyHash> ledger_;
+  // Idempotency keys of applied trades: exchange_id|trading_day|trade_id.
+  // In-memory only -- the RESUME replay seam is intra-process; a process
+  // restart reconciles from the broker position snapshot instead
+  std::unordered_set<std::string> seen_trades_;
   std::string current_day_;
   std::optional<td::AccountReport> account_;
   std::filesystem::path snapshot_path_;  // empty = persistence off
