@@ -12,10 +12,17 @@
 
 namespace cts::oms {
 
-CheckedOrderSink::CheckedOrderSink(td::OrderSink& inner,
-                                   OrderManager const& ledger,
+CheckedOrderSink::CheckedOrderSink(td::OrderSink& inner, OrderManager& ledger,
                                    RiskLimits limits)
     : inner_(inner), ledger_(ledger), limits_(limits) {}
+
+std::string CheckedOrderSink::SendAndRegister(td::OrderRequest const& req) {
+  std::string ref = inner_.InsertOrder(req);
+  if (!ref.empty()) {
+    ledger_.RegisterIntent(req, ref);
+  }
+  return ref;
+}
 
 std::string CheckedOrderSink::InsertOrder(td::OrderRequest const& req) {
   if (halted_.load(std::memory_order_acquire)) {
@@ -69,6 +76,8 @@ std::string CheckedOrderSink::InsertOrder(td::OrderRequest const& req) {
         net += p.side == td::Direction::kBuy ? p.total() : -p.total();
       }
     }
+    // In-flight opens count as if filled: never under-book the cap
+    net += ledger_.InFlightOpenExposure(req.instrument_id).net_lots;
     std::int32_t const after =
         net + (req.direction == td::Direction::kBuy ? req.volume
                                                     : -req.volume);
@@ -80,9 +89,10 @@ std::string CheckedOrderSink::InsertOrder(td::OrderRequest const& req) {
     }
   }
 
-  // Margin estimate for opens: price * volume * multiple * ratio vs the
-  // account's available. Skipped (not failed) when any input is unknown --
-  // a missing rate table must not block order flow
+  // Margin estimate for opens: in-flight notional plus the new order, times
+  // price * volume * multiple * ratio, vs the account's available. Skipped
+  // (not failed) when any input is unknown -- a missing rate table must not
+  // block order flow
   if (req.offset == td::Offset::kOpen) {
     auto const* rates = rates_.load(std::memory_order_acquire);
     auto const account = ledger_.account();
@@ -94,8 +104,11 @@ std::string CheckedOrderSink::InsertOrder(td::OrderRequest const& req) {
         double const ratio = req.direction == td::Direction::kBuy
                                  ? rate->long_ratio
                                  : rate->short_ratio;
-        double const estimate = req.limit_price * req.volume *
-                                inst->volume_multiple * ratio;
+        // In-flight exposure reuses this order's ratio (an estimate anyway)
+        double const notional =
+            ledger_.InFlightOpenExposure(req.instrument_id).notional +
+            req.limit_price * req.volume;
+        double const estimate = notional * inst->volume_multiple * ratio;
         if (estimate > account->available * limits_.max_margin_usage) {
           SPDLOG_WARN(
               "risk: order rejected, margin estimate {:.0f} exceeds {:.0f} "
@@ -126,7 +139,7 @@ std::string CheckedOrderSink::InsertOrder(td::OrderRequest const& req) {
       td::OrderRequest r = req;
       r.offset = leg.offset;
       r.volume = leg.volume;
-      std::string const ref = inner_.InsertOrder(r);
+      std::string const ref = SendAndRegister(r);
       if (ref.empty()) {
         SPDLOG_WARN("risk: close leg rejected, {} lots of {} unsent",
                     leg.volume, req.instrument_id);
@@ -137,7 +150,7 @@ std::string CheckedOrderSink::InsertOrder(td::OrderRequest const& req) {
     return first_ref;
   }
 
-  return inner_.InsertOrder(req);
+  return SendAndRegister(req);
 }
 
 int CheckedOrderSink::CancelOrder(std::string_view order_ref) {

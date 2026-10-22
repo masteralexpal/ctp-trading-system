@@ -9,6 +9,7 @@
  * reference model computed in-test. Fixed seed: failures reproduce.
  */
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <random>
 #include <set>
@@ -137,6 +138,54 @@ TEST(OrderManagerProperty, TerminalOrderIsNotResurrectedByStaleReports) {
         << "round " << round << ": stale report resurrected a "
         << static_cast<int>(terminal) << " order as "
         << static_cast<int>(orders[0].report.status);
+  }
+}
+
+// Law (intent finalization): an intent leaves the registry on the first
+// report for its ref (confirm or reject); registration after the first
+// report is a no-op. A leaked intent would lock the instrument's risk
+// budget forever -- the registry must equal exactly the refs that were
+// registered while unreported and never reported since.
+TEST(OrderManagerProperty, IntentsAlwaysFinalize) {
+  std::mt19937 rng(99);
+  td::OrderStatus const kAny[] = {
+      td::OrderStatus::kSubmitted, td::OrderStatus::kPartTraded,
+      td::OrderStatus::kAllTraded, td::OrderStatus::kCanceled,
+      td::OrderStatus::kRejected};
+  for (int round = 0; round < 200; ++round) {
+    OrderManager om;
+    std::array<bool, 8> in_journal{};
+    std::array<bool, 8> expected_intent{};
+    int const n = 1 + static_cast<int>(rng() % 40);
+    for (int i = 0; i < n; ++i) {
+      int const ref = static_cast<int>(rng() % 8);
+      char ref_str[13];
+      std::snprintf(ref_str, sizeof(ref_str), "%012d", ref);
+      if (rng() % 2 == 0) {
+        td::OrderRequest req{};
+        std::strncpy(req.instrument_id, "rb2701", sizeof(req.instrument_id) - 1);
+        std::strncpy(req.exchange_id, "SHFE", sizeof(req.exchange_id) - 1);
+        req.direction = td::Direction::kBuy;
+        req.offset = td::Offset::kOpen;
+        req.limit_price = 3500;
+        req.volume = 1;
+        om.RegisterIntent(req, ref_str);
+        if (!in_journal[ref]) {
+          expected_intent[ref] = true;
+        }
+      } else {
+        om.OnTdOrder(MakeOrder(ref_str, kAny[rng() % 5], 0));
+        in_journal[ref] = true;
+        expected_intent[ref] = false;
+      }
+    }
+    for (int ref = 0; ref < 8; ++ref) {
+      char ref_str[13];
+      std::snprintf(ref_str, sizeof(ref_str), "%012d", ref);
+      EXPECT_EQ(om.HasIntent(ref_str), expected_intent[ref])
+          << "round " << round << " ref " << ref_str
+          << ": intent leaked or lost";
+    }
   }
 }
 

@@ -91,6 +91,22 @@ class OrderManager final : public td::TdClient {
   // Any thread: snapshot copies
   std::vector<OrderEntry> orders() const;
   std::vector<Position> positions() const;
+
+  // Local intent: an order sent but not yet acknowledged by the broker. The
+  // first report for the ref (confirm OR reject) finalizes and removes it.
+  // In-memory only -- a restart reconciles via the broker query, not intents
+  void RegisterIntent(td::OrderRequest const& req, std::string_view order_ref);
+  // Test/introspection: is this ref an unfinalized intent
+  bool HasIntent(std::string_view order_ref) const;
+
+  // In-flight open exposure of one instrument: unacked intents plus live
+  // journal orders. net_lots is signed (buy opens +, sell opens -); notional
+  // sums limit_price * remaining volume over both sides (pre-multiple)
+  struct OpenExposure {
+    std::int32_t net_lots{0};
+    double notional{0};
+  };
+  OpenExposure InFlightOpenExposure(std::string_view instrument_id) const;
   // The TradingDay the ledger currently buckets against; empty before the
   // first trade
   std::string trading_day() const;
@@ -128,8 +144,17 @@ class OrderManager final : public td::TdClient {
   int VolumeMultiple(std::string_view instrument_id) const;
   void SaveLocked();  // write the snapshot; mutex_ held, path set
 
+  struct Intent {
+    std::string instrument_id;
+    td::Direction direction;
+    td::Offset offset;
+    std::int32_t volume;
+    double limit_price;
+  };
+
   mutable std::mutex mutex_;
   std::unordered_map<std::string, OrderEntry> journal_;
+  std::unordered_map<std::string, Intent> intents_;
   std::unordered_map<Key, Position, KeyHash> ledger_;
   // Idempotency keys of applied trades: exchange_id|trading_day|trade_id.
   // In-memory only -- the RESUME replay seam is intra-process; a process

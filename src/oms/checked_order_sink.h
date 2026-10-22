@@ -34,12 +34,12 @@ struct RiskLimits {
 };
 
 // Synchronous pre-trade checks; a reject returns an empty ref, the same
-// signal as a local reject from the gateway. Cheap and dumb on purpose:
-// every check is O(1)-ish against the ledger snapshot
+// signal as a local reject from the gateway. Checks read the pessimistic
+// view: ledger positions PLUS in-flight opens (unacked intents and live
+// journal orders), so rapid consecutive signals cannot breach the caps
 class CheckedOrderSink final : public td::OrderSink {
  public:
-  CheckedOrderSink(td::OrderSink& inner,
-                   OrderManager const& ledger,
+  CheckedOrderSink(td::OrderSink& inner, OrderManager& ledger,
                    RiskLimits limits);
 
   std::string InsertOrder(td::OrderRequest const& req) override;
@@ -68,8 +68,12 @@ class CheckedOrderSink final : public td::OrderSink {
   bool halted() const { return halted_.load(std::memory_order_acquire); }
 
  private:
+  // Sends and, on success, registers the intent so the next order's checks
+  // see it -- the broker's first report finalizes the intent
+  std::string SendAndRegister(td::OrderRequest const& req);
+
   td::OrderSink& inner_;
-  OrderManager const& ledger_;
+  OrderManager& ledger_;
   RiskLimits const limits_;
   std::atomic<bool> halted_{false};
   std::atomic<std::shared_ptr<instrument::InstrumentMaster const>> master_;

@@ -116,6 +116,85 @@ TEST(OrderManagerTest, TerminalOrderAbsorbsStaleReports) {
   EXPECT_EQ(orders[0].report.status, td::OrderStatus::kCanceled);
 }
 
+td::OrderRequest MakeRequest(std::string_view instrument,
+                             td::Direction direction,
+                             td::Offset offset,
+                             double price,
+                             int volume) {
+  td::OrderRequest req{};
+  std::memcpy(req.instrument_id, instrument.data(), instrument.size());
+  std::memcpy(req.exchange_id, "SHFE", 5);
+  req.direction = direction;
+  req.offset = offset;
+  req.limit_price = price;
+  req.volume = volume;
+  return req;
+}
+
+TEST(OrderManagerTest, IntentFinalizesOnFirstReport) {
+  OrderManager oms;
+  oms.RegisterIntent(
+      MakeRequest("rb2701", td::Direction::kBuy, td::Offset::kOpen, 3500, 2),
+      "7");
+  EXPECT_TRUE(oms.HasIntent("7"));
+  oms.OnTdOrder(MakeOrder("7", "rb2701", td::OrderStatus::kSubmitted, 2, 0));
+  EXPECT_FALSE(oms.HasIntent("7"));
+}
+
+TEST(OrderManagerTest, RejectReportFinalizesTheIntent) {
+  OrderManager oms;
+  oms.RegisterIntent(
+      MakeRequest("rb2701", td::Direction::kBuy, td::Offset::kOpen, 3500, 2),
+      "7");
+  oms.OnTdOrder(MakeOrder("7", "rb2701", td::OrderStatus::kRejected, 2, 0));
+  EXPECT_FALSE(oms.HasIntent("7"));
+}
+
+TEST(OrderManagerTest, IntentRegistrationLosesToARacingReport) {
+  OrderManager oms;
+  // The first report arrived before the send returned (real CTP race)
+  oms.OnTdOrder(MakeOrder("7", "rb2701", td::OrderStatus::kSubmitted, 2, 0));
+  oms.RegisterIntent(
+      MakeRequest("rb2701", td::Direction::kBuy, td::Offset::kOpen, 3500, 2),
+      "7");
+  EXPECT_FALSE(oms.HasIntent("7"));
+}
+
+TEST(OrderManagerTest, InFlightExposureHandsOffFromIntentToJournal) {
+  OrderManager oms;
+  oms.RegisterIntent(
+      MakeRequest("rb2701", td::Direction::kBuy, td::Offset::kOpen, 3500, 2),
+      "7");
+  auto e = oms.InFlightOpenExposure("rb2701");
+  EXPECT_EQ(e.net_lots, 2);
+  EXPECT_DOUBLE_EQ(e.notional, 7000.0);
+
+  // Confirm: the journal takes over the SAME remaining volume (no double
+  // count during the intent -> journal handoff)
+  oms.OnTdOrder(MakeOrder("7", "rb2701", td::OrderStatus::kSubmitted, 2, 0));
+  e = oms.InFlightOpenExposure("rb2701");
+  EXPECT_EQ(e.net_lots, 2);
+  EXPECT_DOUBLE_EQ(e.notional, 7000.0);
+
+  oms.OnTdOrder(MakeOrder("7", "rb2701", td::OrderStatus::kPartTraded, 2, 1));
+  e = oms.InFlightOpenExposure("rb2701");
+  EXPECT_EQ(e.net_lots, 1);  // only the remaining lot still counts
+  EXPECT_DOUBLE_EQ(e.notional, 3500.0);
+
+  oms.RegisterIntent(
+      MakeRequest("rb2701", td::Direction::kSell, td::Offset::kOpen, 3600, 1),
+      "8");
+  e = oms.InFlightOpenExposure("rb2701");
+  EXPECT_EQ(e.net_lots, 0);
+  EXPECT_DOUBLE_EQ(e.notional, 3500.0 + 3600.0);
+
+  // Terminal: the exposure releases
+  oms.OnTdOrder(MakeOrder("7", "rb2701", td::OrderStatus::kCanceled, 2, 1));
+  e = oms.InFlightOpenExposure("rb2701");
+  EXPECT_EQ(e.net_lots, -1);
+  EXPECT_DOUBLE_EQ(e.notional, 3600.0);
+}
+
 TEST(OrderManagerTest, OpenFillAddsTodayBucket) {
   OrderManager oms;
   oms.OnTdTrade(MakeTrade("rb2701", td::Direction::kBuy, td::Offset::kOpen,

@@ -68,6 +68,24 @@ class CheckedOrderSinkTest : public testing::Test {
   }
 };
 
+td::OrderReport MakeReport(std::string_view ref,
+                           td::OrderStatus status,
+                           int total,
+                           int traded) {
+  td::OrderReport r{};
+  std::memcpy(r.order_ref, ref.data(), ref.size());
+  std::memcpy(r.instrument_id, "rb2701", 6);
+  std::memcpy(r.exchange_id, "SHFE", 5);
+  r.direction = td::Direction::kBuy;
+  r.offset = td::Offset::kOpen;
+  r.limit_price = 3500;
+  r.volume_total_original = total;
+  r.volume_traded = traded;
+  r.volume_total = total - traded;
+  r.status = status;
+  return r;
+}
+
 TEST_F(CheckedOrderSinkTest, PassesCleanOrdersThrough) {
   EXPECT_EQ(sink_.InsertOrder(MakeReq()), "1");
   ASSERT_EQ(inner_.inserted.size(), 1);
@@ -204,6 +222,50 @@ void OpenLongOn(OrderManager& ledger, char const* day, int volume) {
   t.price = 3500;
   t.volume = volume;
   ledger.OnTdTrade(t);
+}
+
+TEST_F(CheckedOrderSinkTest, PositionCapCountsInFlightOpens) {
+  // cap 3, no fills: two rapid opens of 2 must not both pass (the report for
+  // the first has not arrived yet -- the intent alone must close the gap)
+  EXPECT_FALSE(sink_.InsertOrder(MakeReq(2)).empty());  // ref "1"
+  EXPECT_TRUE(sink_.InsertOrder(MakeReq(2)).empty());   // 2+2 > 3
+  ASSERT_EQ(inner_.inserted.size(), 1u);
+
+  // The broker confirms: exposure hands off intent -> journal, still counted
+  ledger_.OnTdOrder(MakeReport("1", td::OrderStatus::kSubmitted, 2, 0));
+  EXPECT_TRUE(sink_.InsertOrder(MakeReq(2)).empty());
+
+  // Terminal: the exposure releases
+  ledger_.OnTdOrder(MakeReport("1", td::OrderStatus::kCanceled, 2, 0));
+  EXPECT_FALSE(sink_.InsertOrder(MakeReq(2)).empty());
+}
+
+TEST_F(CheckedOrderSinkTest, MarginCheckCountsInFlightNotional) {
+  td::RateTable rates;
+  td::MarginRate rate{};
+  std::strncpy(rate.instrument_id, "rb2701", sizeof(rate.instrument_id) - 1);
+  rate.long_ratio = 0.1;
+  rate.short_ratio = 0.1;
+  rates.Update(rate);
+  sink_.SetRateTable(&rates);
+  sink_.SetInstrumentMaster(
+      std::make_shared<instrument::InstrumentMaster>(
+          instrument::InstrumentMaster::Build({[] {
+            instrument::Instrument i;
+            i.instrument_id = "rb2701";
+            i.volume_multiple = 10;
+            return i;
+          }()})));
+  td::AccountReport account{};
+  account.available = 10000;
+  ledger_.OnTdAccount(account);
+
+  // Budget 10000 * 0.8 = 8000. One open: 3500; two: 7000; the third would
+  // reach 10500 -- only intents make the second and third visible
+  EXPECT_FALSE(sink_.InsertOrder(MakeReq(1)).empty());
+  EXPECT_FALSE(sink_.InsertOrder(MakeReq(1)).empty());
+  EXPECT_TRUE(sink_.InsertOrder(MakeReq(1)).empty());
+  ASSERT_EQ(inner_.inserted.size(), 2u);
 }
 
 TEST_F(CheckedOrderSinkTest, CloseSplitsAcrossBucketsOnShfe) {

@@ -27,6 +27,8 @@ td::Direction Opposite(td::Direction d) {
 
 void OrderManager::OnTdOrder(td::OrderReport const& order) {
   std::lock_guard lock(mutex_);
+  // Any report (confirm or reject) finalizes the matching intent
+  intents_.erase(order.order_ref);
   // Latest report wins among live states; terminal states absorb everything
   // that arrives after them (replay, unordered sources). CTP fires the
   // all-traded report BEFORE the trade reports -- the journal reflects it,
@@ -39,6 +41,51 @@ void OrderManager::OnTdOrder(td::OrderReport const& order) {
   entry.report = order;
   entry.updated_epoch_ms = base::NowEpochMs();
   SaveLocked();
+}
+
+void OrderManager::RegisterIntent(td::OrderRequest const& req,
+                                  std::string_view order_ref) {
+  std::lock_guard lock(mutex_);
+  // Empty ref = the send failed locally; a journal hit = the first report
+  // raced ahead of registration -- no intent either way
+  if (order_ref.empty() || journal_.contains(std::string(order_ref))) {
+    return;
+  }
+  Intent in;
+  in.instrument_id = req.instrument_id;
+  in.direction = req.direction;
+  in.offset = req.offset;
+  in.volume = req.volume;
+  in.limit_price = req.limit_price;
+  intents_.emplace(order_ref, std::move(in));
+}
+
+bool OrderManager::HasIntent(std::string_view order_ref) const {
+  std::lock_guard lock(mutex_);
+  return intents_.contains(std::string(order_ref));
+}
+
+OrderManager::OpenExposure OrderManager::InFlightOpenExposure(
+    std::string_view instrument_id) const {
+  std::lock_guard lock(mutex_);
+  OpenExposure e;
+  auto fold = [&](td::Direction d, std::int32_t lots, double price) {
+    e.net_lots += d == td::Direction::kBuy ? lots : -lots;
+    e.notional += price * lots;
+  };
+  for (auto const& [ref, in] : intents_) {
+    if (in.offset == td::Offset::kOpen && in.instrument_id == instrument_id) {
+      fold(in.direction, in.volume, in.limit_price);
+    }
+  }
+  for (auto const& [ref, entry] : journal_) {
+    auto const& r = entry.report;
+    if (r.offset == td::Offset::kOpen && !td::IsTerminal(r.status) &&
+        r.volume_total > 0 && instrument_id == r.instrument_id) {
+      fold(r.direction, r.volume_total, r.limit_price);
+    }
+  }
+  return e;
 }
 
 void OrderManager::OnTdTrade(td::TradeReport const& trade) {
